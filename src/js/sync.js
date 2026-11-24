@@ -2,7 +2,10 @@
 // Transport: plain window.fetch to api.github.com (GitHub's REST API supports CORS).
 // The token lives only in the OS keychain via app.secrets; it is never logged.
 
-import { mergeBoards, sameBoard, encodeBase64Utf8, decodeBase64Utf8 } from "./sync-merge.js";
+import {
+  mergeBoards, sameBoard, encodeBase64Utf8, decodeBase64Utf8,
+  referencedAttachmentIds, attachmentsDir, planAttachments,
+} from "./sync-merge.js";
 
 const API = "https://api.github.com";
 const TOKEN_KEY = "github-token";
@@ -11,12 +14,14 @@ const DEBOUNCE_MS = 4000;
 const INTERVAL_MS = 2 * 60 * 1000;
 const FOCUS_MIN_GAP_MS = 15 * 1000; // don't hammer GitHub when switching windows a lot
 const MAX_CONFLICT_RETRIES = 3;
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // the app itself refuses files over 20 MB
+const CONTENTS_MAX_BYTES = 1024 * 1024;    // bigger files need the blob API to download
 
 const S = { repo: "sync.repo", branch: "sync.branch", path: "sync.path", last: "sync.lastSyncedAt" };
 
 let app;
 let hasToken = false;
-let status = { kind: "off", message: "" }; // off | synced | syncing | offline | error
+let status = { kind: "off", message: "" }; // off | synced | partial | syncing | offline | error
 let lastToastKey = null;
 let running = null;      // promise of the sync loop in progress
 let again = false;       // a sync was requested while one was running
@@ -24,6 +29,10 @@ let debounceTimer = null;
 let lastAttemptAt = 0;
 const listeners = new Set();
 let btn;
+// Attachment sync state (kept across cycles, reset when the repo/branch/path changes).
+let remoteKnownKey = "";
+let remoteKnown = new Set();   // ids confirmed to exist in the repo (they are never changed)
+const tooBigWarned = new Set(); // ids we already toasted about being over 50 MB
 
 // ---------- Settings ----------
 function config() {
@@ -161,15 +170,15 @@ async function syncOnce() {
       // Read the board *now*, after the network wait, so edits made meanwhile are included.
       // Everything from here to setBoard is synchronous, so nothing can slip in between.
       const local = app.store.board;
-      const localEmpty = !local.tasks.length && !Object.keys(local.deleted || {}).length;
+      const localEmpty = !local.tasks.length && !(local.links || []).length && !Object.keys(local.deleted || {}).length;
       const merged = localEmpty && remote.board ? remote.board : mergeBoards(local, remote.board);
       if (!sameBoard(merged, local)) {
         app.store.setBoard(merged, { silent: true });
         app.render();
       }
 
-      // Task order is per-device z-order: don't commit just because it differs
-      // (two devices would keep swapping it back and forth).
+      // Task (and link) order is per-device z-order: don't commit just because it
+      // differs (two devices would keep swapping it back and forth).
       if (remote.board && sameBoard(merged, remote.board, { ignoreTaskOrder: true })) break;
       const ok = await putRemote(token, cfg, app.store.normalize(merged), remote.sha, remote.createWithoutBranch);
       if (ok) break;
@@ -179,13 +188,159 @@ async function syncOnce() {
     }
     const iso = new Date().toISOString();
     app.settings.set(S.last, iso);
-    setStatus({ kind: "synced" });
+    // Board is in sync. Files are a separate step that never fails the board sync.
+    const failed = await syncAttachments(token, cfg);
+    if (!failed) setStatus({ kind: "synced" });
+    else setStatus({
+      kind: "partial",
+      message: failed < 0 ? "Files couldn't sync (will retry)"
+        : `${failed} file${failed === 1 ? "" : "s"} couldn't sync (will retry)`,
+    });
   } catch (e) {
     if (e instanceof SyncError) setStatus({ kind: e.kind, message: e.message });
     else {
       console.error("Sync failed:", e?.name, e?.message); // never includes the token
       setStatus({ kind: "error", message: "Sync failed unexpectedly" });
     }
+  }
+}
+
+// ---------- Attachment files ----------
+// Files live in "<board folder>/attachments/<attachmentId>". An id is unique and a
+// file never changes, so there are no conflicts: we only copy what's missing.
+// Files no longer used are left in the repo (deleting them would also only hide
+// them: they stay in the history).
+
+/**
+ * Ids (-> {sha, size}) in the repo's attachments folder. Uses the recursive
+ * tree (one request, no 1000-entry cap); if GitHub truncates it, falls back to
+ * listing the folder.
+ */
+async function listRemoteAttachments(token, { repo, branch }, dir) {
+  const out = new Map();
+  const prefix = `${dir}/`;
+  const t = await gh(token, "GET", `${repoUrl(repo)}/git/trees/${encPath(branch)}?recursive=1`);
+  if (t.status === 404 || t.status === 409) return out; // empty repo / no branch yet
+  if (!t.ok) throw httpError(t);
+  if (!t.data?.truncated) {
+    for (const e of t.data?.tree || []) {
+      if (e?.type !== "blob" || typeof e.path !== "string" || !e.path.startsWith(prefix)) continue;
+      const name = e.path.slice(prefix.length);
+      if (name && !name.includes("/")) out.set(name, { sha: e.sha, size: e.size || 0 });
+    }
+    return out;
+  }
+  const c = await gh(token, "GET", `${repoUrl(repo)}/contents/${encPath(dir)}?ref=${encodeURIComponent(branch)}`);
+  if (c.status === 404) return out;
+  if (!c.ok) throw httpError(c);
+  if (Array.isArray(c.data)) {
+    for (const e of c.data) if (e?.type === "file") out.set(e.name, { sha: e.sha, size: e.size || 0 });
+  }
+  return out;
+}
+
+/** Upload one file. Returns "ok" or "too-big". Throws on failure. */
+async function uploadAttachment(token, { repo, branch }, dir, id, sizeHint) {
+  if (sizeHint > MAX_UPLOAD_BYTES) return "too-big";
+  const b64 = await app.attachments.read(id);
+  if (!b64) throw new SyncError("error", `File ${id} isn't on this computer`);
+  if (Math.floor((b64.replace(/\s+/g, "").length * 3) / 4) > MAX_UPLOAD_BYTES) return "too-big";
+  const r = await gh(token, "PUT", `${repoUrl(repo)}/contents/${encPath(`${dir}/${id}`)}`, {
+    message: "Add attachment", content: b64.replace(/\s+/g, ""), branch,
+  });
+  if (r.ok) return "ok";
+  // 422 "sha wasn't supplied": the file is already there (another computer uploaded it).
+  if (r.status === 422 && /sha/i.test(r.data?.message || "")) return "ok";
+  throw httpError(r);
+}
+
+/** Download one file into this computer's attachments folder. */
+async function downloadAttachment(token, { repo, branch }, dir, id, entry) {
+  let b64 = "";
+  if (!(entry.size > CONTENTS_MAX_BYTES)) {
+    const r = await gh(token, "GET", `${repoUrl(repo)}/contents/${encPath(`${dir}/${id}`)}?ref=${encodeURIComponent(branch)}`);
+    if (!r.ok) throw httpError(r);
+    b64 = r.data?.content || "";
+    if (!entry.sha) entry = { ...entry, sha: r.data?.sha };
+  }
+  if (!b64) {
+    if (!entry.sha) throw new SyncError("error", `File ${id} has no content on GitHub`);
+    const blob = await gh(token, "GET", `${repoUrl(repo)}/git/blobs/${entry.sha}`);
+    if (!blob.ok) throw httpError(blob);
+    if (blob.data?.encoding && blob.data.encoding !== "base64") throw new SyncError("error", `Unexpected encoding for ${id}`);
+    b64 = blob.data?.content || "";
+  }
+  b64 = b64.replace(/\s+/g, "");
+  if (!b64 && entry.size) throw new SyncError("error", `File ${id} came back empty`);
+  await app.attachments.save(id, b64);
+  app.attachments.changed(id);
+}
+
+/**
+ * Make sure every file the board uses is both here and in the repo.
+ * Runs sequentially with progress in the status. Returns the number of files
+ * that failed (they are retried next cycle), or -1 if the repo's file list
+ * couldn't be read. Never throws.
+ */
+async function syncAttachments(token, cfg) {
+  const att = app.attachments;
+  if (!att || typeof att.list !== "function" || typeof att.read !== "function" || typeof att.save !== "function") return 0;
+  try {
+    const key = `${cfg.repo}|${cfg.branch}|${cfg.path}`;
+    if (key !== remoteKnownKey) { remoteKnownKey = key; remoteKnown = new Set(); }
+
+    const board = app.store.board;
+    const referenced = referencedAttachmentIds(board);
+    if (!referenced.size) return 0;
+    const sizes = new Map();
+    for (const t of board.tasks) if (t.attachmentId) sizes.set(t.attachmentId, Number(t.size) || 0);
+
+    const local = new Set(await att.list()); // once per cycle
+    // Skip the listing entirely when everything is already known to be in both places.
+    const unsure = [...referenced].filter((id) =>
+      !(local.has(id) && remoteKnown.has(id)) && !(tooBigWarned.has(id) && local.has(id)));
+    if (!unsure.length) return 0;
+
+    const dir = attachmentsDir(cfg.path);
+    const remote = await listRemoteAttachments(token, cfg, dir); // once per cycle
+    for (const id of remote.keys()) remoteKnown.add(id);
+    const plan = planAttachments(referenced, local, new Set(remote.keys()));
+    const upload = plan.upload.filter((id) => !tooBigWarned.has(id));
+    const jobs = [
+      ...upload.map((id) => ({ id, up: true })),
+      ...plan.download.map((id) => ({ id, up: false })),
+    ];
+    if (!jobs.length) return 0;
+
+    let failed = 0, done = 0;
+    for (const job of jobs) {
+      done++;
+      setStatus({ kind: "syncing", message: `Syncing files ${done}/${jobs.length}…` });
+      try {
+        if (job.up) {
+          const res = await uploadAttachment(token, cfg, dir, job.id, sizes.get(job.id) || 0);
+          if (res === "too-big") {
+            if (!tooBigWarned.has(job.id)) {
+              tooBigWarned.add(job.id);
+              const name = board.tasks.find((t) => t.attachmentId === job.id)?.title || job.id;
+              app.toast(`Sync: “${name}” is over ${MAX_UPLOAD_BYTES / 1048576} MB, so it stays on this computer only.`, { ms: 10000 });
+            }
+          } else remoteKnown.add(job.id);
+        } else {
+          await downloadAttachment(token, cfg, dir, job.id, remote.get(job.id));
+        }
+      } catch (e) {
+        failed++;
+        if (!(e instanceof SyncError)) console.error("Attachment sync failed:", e?.name, e?.message);
+        // No point trying the rest while offline or rate limited: count them all as pending.
+        if (e instanceof SyncError && e.kind === "offline") { failed += jobs.length - done; break; }
+      }
+    }
+    return failed;
+  } catch (e) {
+    // Listing failed (offline, rate limit...). The board is synced; files retry next cycle.
+    if (!(e instanceof SyncError)) console.error("Attachment sync failed:", e?.name, e?.message);
+    return -1;
   }
 }
 
@@ -218,10 +373,14 @@ function timeAgo(iso) {
 function statusText() {
   switch (status.kind) {
     case "off": return "Sync: not set up";
-    case "syncing": return "Syncing…";
+    case "syncing": return status.message || "Syncing…";
     case "synced": {
       const last = app.settings.get(S.last);
       return last ? `Synced · ${timeAgo(last)}` : "Synced";
+    }
+    case "partial": {
+      const last = app.settings.get(S.last);
+      return last ? `Synced · ${timeAgo(last)} · files pending` : "Synced · files pending";
     }
     case "offline": return "Offline (will retry)";
     default: return "Sync error";
@@ -242,12 +401,13 @@ function setStatus(next) {
 
   // Toast only when the situation changes, not on every retry or routine sync.
   if (status.kind === "syncing") return;
-  const key = status.kind === "synced" || status.kind === "off" ? status.kind : `${status.kind}:${status.message}`;
+  // "partial" (some files failed) toasts once, not again each time the count changes.
+  const key = ["synced", "off", "partial"].includes(status.kind) ? status.kind : `${status.kind}:${status.message}`;
   if (key === lastToastKey) return;
-  const hadProblem = lastToastKey && /^(offline|error)/.test(lastToastKey);
+  const hadProblem = lastToastKey && /^(offline|error|partial)/.test(lastToastKey);
   lastToastKey = key;
   if (status.kind === "error") app.toast(`Sync error: ${status.message}`, { ms: 10000 });
-  else if (status.kind === "offline") app.toast(`Sync: ${status.message}`);
+  else if (status.kind === "offline" || status.kind === "partial") app.toast(`Sync: ${status.message}`);
   else if (status.kind === "synced" && hadProblem) app.toast("Sync is working again");
 }
 
@@ -306,8 +466,8 @@ function openSettings() {
   const refresh = () => {
     $(".sync-status-line").dataset.state = status.kind;
     let text = statusText();
-    if (status.message && (status.kind === "error" || status.kind === "offline")) text += ` – ${status.message}`;
-    if (status.kind === "synced") text += ` to ${config().repo}`;
+    if (status.message && ["error", "offline", "partial"].includes(status.kind)) text += ` – ${status.message}`;
+    if (status.kind === "synced" || status.kind === "partial") text += ` to ${config().repo}`;
     $(".sync-status-text").textContent = text;
     f.token.placeholder = hasToken ? "Saved in keychain – leave blank to keep it" : "Paste your fine-grained token (github_pat_…)";
     $('[data-act="sync"]').disabled = !isConfigured() || !!running;
@@ -347,7 +507,8 @@ function openSettings() {
       f.repo.value = repo;
       say(`Connected to ${repo}${r.data?.private === false ? " (note: this repo is public!)" : ""}. Syncing…`);
       await requestSync();
-      say(status.kind === "synced" ? `Connected to ${repo}.` : "", status.kind !== "synced");
+      const ok = status.kind === "synced" || status.kind === "partial";
+      say(ok ? `Connected to ${repo}.` : "", !ok);
     } catch (e) {
       say(e instanceof SyncError ? e.message : "Couldn't connect.", true);
     } finally {

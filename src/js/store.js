@@ -2,9 +2,15 @@
 // Inside the desktop app it saves via Rust to a file in the app's data folder.
 // Opened in a plain browser (for development) it falls back to localStorage.
 
+import { KINDS, COLOR_BY_KEY, LINK_TYPES } from "./model.js";
+
 const invoke = window.__TAURI__?.core?.invoke;
 
-export let board = { version: 1, tasks: [], deleted: {} };
+// tasks: every element on every canvas (tasks, images, files, sub-canvases).
+//        `canvasId` says which canvas it sits on (null = the home canvas).
+// links: connections between two elements on the same canvas.
+// deleted: tombstones {id: deletedAt} for tasks AND links, so sync can propagate deletes.
+export let board = { version: 1, tasks: [], links: [], deleted: {} };
 
 /** Fires "changed" after every local edit (not after setBoard with silent). */
 export const events = new EventTarget();
@@ -13,26 +19,36 @@ let onError = () => {};
 export function setErrorHandler(fn) { onError = fn; }
 
 function normalize(data) {
-  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  const now = new Date().toISOString();
+  const rawTasks = Array.isArray(data?.tasks) ? data.tasks : [];
   const deleted = data?.deleted && typeof data.deleted === "object" ? { ...data.deleted } : {};
-  return {
-    version: 1,
-    deleted,
-    tasks: tasks
-      .filter((t) => t && typeof t.id === "string")
-      .map((t) => ({
-        ...t, // keep extra fields added by features (e.g. source, externalId)
-        id: t.id,
-        title: String(t.title ?? ""),
-        notes: String(t.notes ?? ""),
-        x: Number(t.x) || 0,
-        y: Number(t.y) || 0,
-        due: typeof t.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due) ? t.due : null,
-        createdAt: t.createdAt || new Date().toISOString(),
-        updatedAt: t.updatedAt || t.createdAt || new Date().toISOString(),
-        completedAt: t.completedAt || null,
-      })),
-  };
+  const tasks = rawTasks
+    .filter((t) => t && typeof t.id === "string")
+    .map((t) => ({
+      ...t, // keep extra fields added by features (e.g. source, externalId, attachmentId)
+      id: t.id,
+      kind: KINDS.includes(t.kind) ? t.kind : "task",
+      title: String(t.title ?? ""),
+      notes: String(t.notes ?? ""),
+      x: Number(t.x) || 0,
+      y: Number(t.y) || 0,
+      due: typeof t.due === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.due) ? t.due : null,
+      color: COLOR_BY_KEY[t.color] ? t.color : null,
+      canvasId: typeof t.canvasId === "string" ? t.canvasId : null,
+      createdAt: t.createdAt || now,
+      updatedAt: t.updatedAt || t.createdAt || now,
+      completedAt: t.completedAt || null,
+    }));
+  const ids = new Set(tasks.map((t) => t.id));
+  const links = (Array.isArray(data?.links) ? data.links : [])
+    .filter((l) => l && typeof l.id === "string" && ids.has(l.from) && ids.has(l.to) && l.from !== l.to)
+    .map((l) => ({
+      ...l,
+      type: LINK_TYPES[l.type] ? l.type : "related",
+      createdAt: l.createdAt || now,
+      updatedAt: l.updatedAt || l.createdAt || now,
+    }));
+  return { version: 1, deleted, tasks, links };
 }
 
 async function readRaw(backup) {
@@ -101,21 +117,92 @@ export function add(task) {
   save();
 }
 
-/** Removes a task; returns {task, index} so it can be restored. */
-export function remove(id) {
-  const index = board.tasks.findIndex((t) => t.id === id);
-  if (index < 0) return null;
-  const [task] = board.tasks.splice(index, 1);
-  board.deleted[id] = new Date().toISOString(); // tombstone so sync knows it was deleted
+// ---------- Links ----------
+export const getLink = (id) => board.links.find((l) => l.id === id);
+
+export function addLink(link) {
+  board.links.push(link);
+  delete board.deleted[link.id];
   save();
-  return { task, index };
 }
 
-export function restore({ task, index }) {
-  board.tasks.splice(Math.min(index, board.tasks.length), 0, task);
-  delete board.deleted[task.id];
-  task.updatedAt = new Date().toISOString();
+export function updateLink(id, patch) {
+  const l = getLink(id);
+  if (!l) return;
+  Object.assign(l, patch, { updatedAt: new Date().toISOString() });
   save();
+}
+
+// ---------- Removing and restoring (with tombstones for sync) ----------
+
+/** All elements inside a sub-canvas, at any depth. */
+export function descendants(canvasId) {
+  const out = [];
+  const walk = (cid) => {
+    for (const t of board.tasks) {
+      if (t.canvasId === cid) {
+        out.push(t);
+        if (t.kind === "canvas") walk(t.id);
+      }
+    }
+  };
+  walk(canvasId);
+  return out;
+}
+
+/**
+ * Remove tasks (plus everything inside sub-canvases, plus links touching them)
+ * and/or specific links. Returns a snapshot that `restoreMany` can undo.
+ */
+export function removeMany({ taskIds = [], linkIds = [] } = {}) {
+  const ts = new Date().toISOString();
+  const taskSet = new Set(taskIds);
+  for (const id of taskIds) {
+    const t = get(id);
+    if (t?.kind === "canvas") for (const d of descendants(id)) taskSet.add(d.id);
+  }
+  const linkSet = new Set(linkIds);
+  for (const l of board.links) if (taskSet.has(l.from) || taskSet.has(l.to)) linkSet.add(l.id);
+
+  const snapshot = { tasks: [], links: [] };
+  board.tasks = board.tasks.filter((t, index) => {
+    if (!taskSet.has(t.id)) return true;
+    snapshot.tasks.push({ item: t, index });
+    board.deleted[t.id] = ts;
+    return false;
+  });
+  board.links = board.links.filter((l, index) => {
+    if (!linkSet.has(l.id)) return true;
+    snapshot.links.push({ item: l, index });
+    board.deleted[l.id] = ts;
+    return false;
+  });
+  save();
+  return snapshot;
+}
+
+export function restoreMany(snapshot) {
+  const ts = new Date().toISOString();
+  for (const { item, index } of snapshot.tasks) {
+    board.tasks.splice(Math.min(index, board.tasks.length), 0, item);
+    delete board.deleted[item.id];
+    item.updatedAt = ts;
+  }
+  for (const { item, index } of snapshot.links) {
+    board.links.splice(Math.min(index, board.links.length), 0, item);
+    delete board.deleted[item.id];
+    item.updatedAt = ts;
+  }
+  save();
+}
+
+/** Remove one element (and its links / contents). Returns an undo snapshot. */
+export function remove(id) {
+  return removeMany({ taskIds: [id] });
+}
+
+export function removeLink(id) {
+  return removeMany({ linkIds: [id] });
 }
 
 /** Later in the list = drawn on top. */

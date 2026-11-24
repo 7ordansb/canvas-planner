@@ -64,6 +64,7 @@ The toolbar button shows what's happening:
 | Synced · 2 min ago | Everything is up to date (as of that time). |
 | Syncing… | Sync is talking to GitHub right now. |
 | Offline (will retry) | GitHub couldn't be reached. Your changes are safe on this computer and will be sent later. |
+| Synced · files pending | Tasks are synced, but some images or files didn't transfer yet. They'll be retried. |
 | Sync error | Something needs your attention. Click the button to see what. |
 
 ## What happens if I change things on two computers?
@@ -80,8 +81,40 @@ Each task is handled on its own:
 - **The stacking order of cards** (which card is on top) is kept separately
   on each computer.
 
-Records of deleted tasks are kept for 60 days so every computer gets the
+Records of deleted tasks and links are kept for 60 days so every computer gets the
 message, then cleaned up.
+
+## Links, images and files
+
+**Links** (the lines between cards) sync just like tasks: each link is handled
+on its own, the most recent change wins (for example changing "Related" to
+"Dependency"), and deleting a link on one computer deletes it everywhere unless
+it was changed later on another. A link to a card that was deleted elsewhere
+disappears with the card. The order links are drawn in stays per computer.
+
+**Images and files** you put on the board are uploaded to the same repository,
+in a folder called `attachments` next to the board file (`attachments/` for
+`board.json`, or `sub/attachments/` if the file path is `sub/board.json`).
+Each file gets a unique name and never changes, so files can't conflict. After
+each board sync:
+
+- files used on the board that are on this computer but not on GitHub are uploaded
+  (one commit per file, called `Add attachment`);
+- files used on the board that are on GitHub but not on this computer are downloaded,
+  and the picture appears as soon as it arrives.
+
+The button shows progress ("Syncing files 2/5…"). If a file fails, your tasks
+are still synced; the button says **Synced · files pending**, you get one
+message, and the file is tried again on the next sync.
+
+Size limits: the app accepts files up to 20 MB. Sync won't upload anything
+over 50 MB (that file stays on that computer only, and you get one message
+about it).
+
+**Deleted images and files stay in the repository.** When you remove an image
+from the board, its file is left in the `attachments` folder on GitHub, and
+even if you delete it there by hand it remains in the repository's history.
+Keep this in mind before adding anything sensitive.
 
 Sync compares the clocks on your computers, so make sure each computer's
 date and time are set correctly (they almost always are).
@@ -90,7 +123,8 @@ date and time are set correctly (they almost always are).
 
 | What | Where |
 |---|---|
-| Your board (tasks, notes, due dates) | On each computer, and in `board.json` in your GitHub repository |
+| Your board (tasks, notes, due dates, links) | On each computer, and in `board.json` in your GitHub repository |
+| Images and files on the board | In the app's data folder on each computer, and in `attachments/` next to `board.json` in the repository |
 | The GitHub token | In your computer's secure keychain (Windows Credential Manager or the macOS Keychain). It is **not** in the board file or in GitHub. |
 | Repository name, branch, file path, last sync time | In this app's settings on each computer |
 

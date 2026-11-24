@@ -9,7 +9,8 @@
 }
 [data-state="synced"] .sync-dot { --c: #3f9f55; }
 [data-state="syncing"] .sync-dot { --c: var(--accent); animation: sync-pulse 1s ease-in-out infinite; }
-[data-state="offline"] .sync-dot { --c: #e0a020; }
+[data-state="offline"] .sync-dot,
+[data-state="partial"] .sync-dot { --c: #e0a020; }
 [data-state="error"] .sync-dot { --c: var(--danger); }
 @keyframes sync-pulse { 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { [data-state="syncing"] .sync-dot { animation: none; } }

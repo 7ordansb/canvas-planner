@@ -3,7 +3,9 @@
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
+use base64::Engine;
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 const KEYCHAIN_SERVICE: &str = "canvas-planner";
 
@@ -52,6 +54,81 @@ fn data_folder(app: tauri::AppHandle) -> Result<String, String> {
     Ok(data_dir(&app)?.display().to_string())
 }
 
+// ----- Attachments (images and files placed on the canvas) -----
+// Stored as <data folder>/attachments/<id>, where id is "<uuid>.<ext>".
+
+fn attachments_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = data_dir(app)?.join("attachments");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create attachments folder: {e}"))?;
+    Ok(dir)
+}
+
+/// Only allow simple names like "3f2a…-…9c.png" so nothing can escape the folder.
+fn attachment_path(app: &tauri::AppHandle, id: &str) -> Result<PathBuf, String> {
+    let ok = !id.is_empty()
+        && id.len() <= 120
+        && !id.starts_with('.')
+        && !id.contains("..")
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.');
+    if !ok {
+        return Err(format!("invalid attachment id: {id}"));
+    }
+    Ok(attachments_dir(app)?.join(id))
+}
+
+/// Save an attachment. `data` is base64 (whitespace is ignored).
+#[tauri::command]
+fn save_attachment(app: tauri::AppHandle, id: String, data: String) -> Result<(), String> {
+    let path = attachment_path(&app, &id)?;
+    let clean: String = data.chars().filter(|c| !c.is_whitespace()).collect();
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(clean)
+        .map_err(|e| format!("bad attachment data: {e}"))?;
+    let tmp = path.with_extension("part");
+    std::fs::write(&tmp, bytes).map_err(|e| format!("could not save attachment: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("could not save attachment: {e}"))
+}
+
+/// Read an attachment as base64, or None if it isn't on this computer (yet).
+#[tauri::command]
+fn read_attachment(app: tauri::AppHandle, id: String) -> Result<Option<String>, String> {
+    let path = attachment_path(&app, &id)?;
+    match std::fs::read(&path) {
+        Ok(bytes) => Ok(Some(base64::engine::general_purpose::STANDARD.encode(bytes))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not read attachment: {e}")),
+    }
+}
+
+/// Ids of all attachments stored on this computer.
+#[tauri::command]
+fn list_attachments(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let dir = attachments_dir(&app)?;
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".part") {
+                out.push(name);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Open an attachment in the computer's default app for that file type.
+#[tauri::command]
+fn open_attachment(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let path = attachment_path(&app, &id)?;
+    if !path.exists() {
+        return Err("This file hasn't been downloaded to this computer yet.".into());
+    }
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 // ----- Secrets in the OS keychain (macOS Keychain / Windows Credential Manager) -----
 
 #[tauri::command]
@@ -89,7 +166,11 @@ fn main() {
             data_folder,
             secret_get,
             secret_set,
-            secret_delete
+            secret_delete,
+            save_attachment,
+            read_attachment,
+            list_attachments,
+            open_attachment
         ])
         .run(tauri::generate_context!())
         .expect("error while running app");

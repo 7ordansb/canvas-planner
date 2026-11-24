@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   mergeBoards, sameBoard, canonicalJSON, encodeBase64Utf8, decodeBase64Utf8, TOMBSTONE_TTL_MS,
+  referencedAttachmentIds, attachmentsDir, planAttachments, isSafeAttachmentId,
 } from "../src/js/sync-merge.js";
 
 const NOW = Date.parse("2026-11-24T12:00:00.000Z");
@@ -10,9 +11,13 @@ const task = (id, updatedMin, extra = {}) => ({
   id, title: id, notes: "", x: 0, y: 0, due: null,
   createdAt: at(-1000), updatedAt: at(updatedMin), completedAt: null, ...extra,
 });
-const board = (tasks = [], deleted = {}) => ({ version: 1, tasks, deleted });
+const link = (id, from, to, updatedMin, extra = {}) => ({
+  id, from, to, type: "related", createdAt: at(-1000), updatedAt: at(updatedMin), ...extra,
+});
+const board = (tasks = [], deleted = {}, links = []) => ({ version: 1, tasks, links, deleted });
 const merge = (a, b) => mergeBoards(a, b, { now: NOW });
 const ids = (b) => b.tasks.map((t) => t.id);
+const linkIds = (b) => b.links.map((l) => l.id);
 
 let passed = 0, failed = 0;
 function test(name, fn) {
@@ -194,6 +199,140 @@ test("base64 UTF-8 round trip with emoji and accents", () => {
   assert.equal(Buffer.from(b64, "base64").toString("utf8"), text, "matches node's own decoder");
   const big = "😀".repeat(100_000);
   assert.equal(decodeBase64Utf8(encodeBase64Utf8(big)), big, "large input doesn't blow the stack");
+});
+
+// ---------- Links ----------
+
+test("board from an older version without links: treated as []", () => {
+  const old = { version: 1, tasks: [task("a", 0)], deleted: {} };
+  const m = checkIdempotent(old, old);
+  assert.deepEqual(m.links, []);
+  const withLink = board([task("a", 0), task("b", 0)], {}, [link("L1", "a", "b", 0)]);
+  const m2 = checkIdempotent(old, withLink);
+  assert.deepEqual(linkIds(m2), ["L1"]);
+  const m3 = checkIdempotent(withLink, old);
+  assert.deepEqual(linkIds(m3), ["L1"]);
+  assert.ok(sameBoard(old, board([task("a", 0)])), "missing links == empty links");
+  assert.ok(!sameBoard(old, withLink));
+});
+
+test("links added on each side are both kept, local order first", () => {
+  const ts = [task("a", 0), task("b", 0), task("c", 0)];
+  const local = board(ts, {}, [link("L2", "a", "b", 1), link("L1", "b", "c", 1)]);
+  const remote = board(ts, {}, [link("R1", "a", "c", 2), link("L1", "b", "c", 1)]);
+  const m = checkIdempotent(local, remote);
+  assert.deepEqual(linkIds(m), ["L2", "L1", "R1"]);
+  assert.deepEqual(ids(m), ["a", "b", "c"]);
+});
+
+test("link type changed on both sides: newer wins", () => {
+  const ts = [task("a", 0), task("b", 0)];
+  const local = board(ts, {}, [link("L", "a", "b", 5, { type: "blocks" })]);
+  const remote = board(ts, {}, [link("L", "a", "b", 7, { type: "or" })]);
+  assert.equal(checkIdempotent(local, remote).links[0].type, "or");
+  assert.equal(checkIdempotent(remote, local).links[0].type, "or");
+  // Exact tie: same winner on both devices.
+  const tl = board(ts, {}, [link("L", "a", "b", 5, { type: "parent" })]);
+  const tr = board(ts, {}, [link("L", "a", "b", 5, { type: "blocks" })]);
+  assert.deepEqual(checkIdempotent(tl, tr).links, checkIdempotent(tr, tl).links);
+});
+
+test("link deleted vs edited: later action wins (shared tombstones)", () => {
+  const ts = [task("a", 0), task("b", 0)];
+  // Deleted after the edit: gone.
+  const m1 = checkIdempotent(board(ts, { L: at(10) }), board(ts, {}, [link("L", "a", "b", 5, { type: "blocks" })]));
+  assert.deepEqual(linkIds(m1), []);
+  assert.deepEqual(m1.deleted, { L: at(10) });
+  // Edited after the delete: survives, tombstone dropped.
+  const m2 = checkIdempotent(board(ts, { L: at(5) }), board(ts, {}, [link("L", "a", "b", 10, { type: "blocks" })]));
+  assert.deepEqual(linkIds(m2), ["L"]);
+  assert.deepEqual(m2.deleted, {});
+  // Mirror of the first case.
+  const m3 = checkIdempotent(board(ts, {}, [link("L", "a", "b", 5)]), board(ts, { L: at(10) }));
+  assert.deepEqual(linkIds(m3), []);
+});
+
+test("link whose task was deleted on the other side: merge doesn't crash", () => {
+  const local = board([task("a", 0), task("b", 0)], {}, [link("L", "a", "b", 1)]);
+  const remote = board([task("a", 0)], { b: at(5) }, []);
+  const m = checkIdempotent(local, remote);
+  assert.deepEqual(ids(m), ["a"]);
+  // The merge itself keeps the dangling link; store.normalize drops it afterwards.
+  assert.deepEqual(linkIds(m), ["L"]);
+  const normalized = { ...m, links: m.links.filter((l) => ids(m).includes(l.from) && ids(m).includes(l.to)) };
+  assert.deepEqual(checkIdempotent(normalized, remote).links, []);
+  // Garbage links are ignored.
+  const g = merge({ tasks: [], links: [null, 3, { from: "a" }, "x"] }, { links: "nope" });
+  assert.deepEqual(g.links, []);
+});
+
+test("an expired link tombstone is kept while a stale copy of the link exists", () => {
+  const old = new Date(NOW - TOMBSTONE_TTL_MS - 60_000).toISOString();
+  const stale = { ...link("L", "a", "b", 0), updatedAt: new Date(Date.parse(old) - 1000).toISOString() };
+  const ts = [task("a", 0), task("b", 0)];
+  const remote = board(ts, {}, [stale]);
+  const m = merge(board(ts, { L: old }), remote);
+  assert.deepEqual(merge(m, remote), m, "idempotent against the stale remote");
+  assert.deepEqual(linkIds(m), []);
+  assert.deepEqual(m.deleted, { L: old });
+  assert.deepEqual(merge(m, m).deleted, {}, "pruned once no input has the link");
+});
+
+test("idempotence and convergence with tasks and links mixed", () => {
+  const a = board(
+    [task("1", 5), task("2", 1), task("4", 0)],
+    { "3": at(2), L3: at(4) },
+    [link("L1", "1", "2", 3, { type: "blocks" }), link("L2", "2", "4", 0), link("L4", "1", "4", 9)],
+  );
+  const b = board(
+    [task("2", 3), task("3", 1), task("5", 0)],
+    { "4": at(6), L4: at(2) },
+    [link("L1", "1", "2", 6, { type: "parent" }), link("L3", "2", "3", 1), link("L5", "2", "5", 0)],
+  );
+  const m = checkIdempotent(a, b);
+  assert.deepEqual(ids(m), ["1", "2", "5"]);
+  assert.deepEqual(linkIds(m), ["L1", "L2", "L4", "L5"]);
+  assert.equal(m.links[0].type, "parent");
+  assert.deepEqual(m.deleted, { "3": at(2), "4": at(6), L3: at(4) });
+  assert.ok(sameBoard(merge(b, m), m, { ignoreTaskOrder: true }));
+  assert.ok(sameBoard(merge(m, b), merge(b, m), { ignoreTaskOrder: true }));
+});
+
+test("sameBoard with ignoreTaskOrder also ignores link order", () => {
+  const l = [link("x", "a", "b", 0), link("y", "b", "a", 0)];
+  const a = board([], {}, l);
+  const b = board([], {}, [l[1], l[0]]);
+  assert.ok(!sameBoard(a, b));
+  assert.ok(sameBoard(a, b, { ignoreTaskOrder: true }));
+  assert.ok(!sameBoard(a, board([], {}, [l[0], { ...l[1], type: "or" }]), { ignoreTaskOrder: true }));
+});
+
+// ---------- Attachments ----------
+
+test("referencedAttachmentIds: live tasks only, unsafe ids ignored", () => {
+  const b = board([
+    task("a", 0, { kind: "image", attachmentId: "1111-aa.png" }),
+    task("b", 0, { kind: "file", attachmentId: "2222-bb.pdf" }),
+    task("c", 0, { kind: "file", attachmentId: "../../etc/passwd" }),
+    task("d", 0, { kind: "file", attachmentId: "sub/x.png" }),
+    task("e", 0),
+    task("f", 0, { kind: "image", attachmentId: "1111-aa.png" }),
+  ], { b: at(5) });
+  assert.deepEqual([...referencedAttachmentIds(b)], ["1111-aa.png"]);
+  assert.deepEqual([...referencedAttachmentIds(null)], []);
+  assert.ok(isSafeAttachmentId("3f2a-9c.png"));
+  for (const bad of ["", ".hidden", "a..b", "a/b", "a\\b", null, 5]) assert.ok(!isSafeAttachmentId(bad), String(bad));
+});
+
+test("attachmentsDir sits next to the board file", () => {
+  assert.equal(attachmentsDir("board.json"), "attachments");
+  assert.equal(attachmentsDir("sub/board.json"), "sub/attachments");
+  assert.equal(attachmentsDir("/a/b/board.json"), "a/b/attachments");
+});
+
+test("planAttachments: upload missing remote, download missing local", () => {
+  const p = planAttachments(new Set(["c", "a", "b", "d"]), new Set(["a", "c", "x"]), new Set(["b", "c", "y"]));
+  assert.deepEqual(p, { upload: ["a"], download: ["b"] });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

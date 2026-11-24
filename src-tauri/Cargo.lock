@@ -411,6 +411,7 @@ dependencies = [
 name = "canvas-planner"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "keyring",
  "serde_json",
  "tauri",
