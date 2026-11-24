@@ -1,0 +1,51 @@
+/* styles for js/importer.js */
+.modal.importer-modal { width: min(680px, calc(100vw - 40px)); }
+
+.importer-tabs { display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid var(--line); }
+.importer-tabs button {
+  background: transparent; border-radius: 8px 8px 0 0; padding: 7px 12px;
+  color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.importer-tabs button.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.importer section[hidden] { display: none; }
+
+.importer textarea { font-family: inherit; resize: vertical; min-height: 140px; }
+.importer code { font-size: 12px; padding: 0 4px; border-radius: 4px; background: var(--line); }
+.modal .importer-check { display: flex; align-items: center; gap: 6px; margin: 8px 0; cursor: pointer; }
+.importer .actions { align-items: center; }
+.importer-count { margin-right: auto; color: var(--muted); font-size: 13px; }
+
+.importer-msg { margin: 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--line); font-size: 13px; line-height: 1.45; }
+.importer-msg.error { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.importer-msg[hidden], .importer [hidden] { display: none; }
+
+.importer-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 12px; }
+.modal .importer-grid label { margin: 6px 0; font-size: 12px; color: var(--muted); }
+.importer-grid select { margin-top: 3px; color: var(--ink); }
+
+.importer-preview { overflow-x: auto; margin-top: 8px; }
+.importer-preview table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.importer-preview th, .importer-preview td {
+  text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line);
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.importer-preview th { color: var(--muted); font-weight: 600; }
+
+.ms-setup { margin-bottom: 10px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; }
+.ms-setup summary { cursor: pointer; font-weight: 600; }
+.ms-setup ol { padding-left: 20px; line-height: 1.5; }
+.ms-code { text-align: center; }
+.ms-user-code {
+  margin: 12px auto; padding: 10px 18px; width: fit-content;
+  font: 700 32px/1.2 ui-monospace, "SF Mono", Consolas, monospace; letter-spacing: .12em;
+  border: 2px dashed var(--line); border-radius: 12px;
+  user-select: all; -webkit-user-select: all;
+}
+.ms-waiting { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); font-size: 13px; }
+.ms-spinner {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: ms-spin .8s linear infinite;
+}
+@keyframes ms-spin { to { transform: rotate(360deg); } }
+.ms-lists { max-height: 220px; overflow: auto; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; }

@@ -1,0 +1,33 @@
+/* styles for js/sync.js */
+
+.sync-btn { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+.sync-dot {
+  --c: #9a9aa6;
+  display: inline-block; width: 8px; height: 8px; flex: none;
+  border-radius: 50%; background: var(--c);
+}
+[data-state="synced"] .sync-dot { --c: #3f9f55; }
+[data-state="syncing"] .sync-dot { --c: var(--accent); animation: sync-pulse 1s ease-in-out infinite; }
+[data-state="offline"] .sync-dot { --c: #e0a020; }
+[data-state="error"] .sync-dot { --c: var(--danger); }
+@keyframes sync-pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { [data-state="syncing"] .sync-dot { animation: none; } }
+
+.sync-settings .sync-status-line {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 6px;
+  padding: 8px 10px; border-radius: 8px; background: var(--line);
+}
+.sync-settings .sync-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sync-settings .sync-row label { margin: 0; }
+.sync-settings .hint { margin: 4px 0 0; }
+.sync-settings .sync-msg { min-height: 1.3em; margin: 10px 0 0; font-size: 13px; }
+.sync-settings .sync-msg.bad { color: var(--danger); }
+.sync-settings .actions { flex-wrap: wrap; }
+.sync-settings .actions .danger { margin-right: auto; }
+
+.sync-help { margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sync-help summary { cursor: pointer; font-weight: 600; }
+.sync-help ol { margin: 10px 0 6px; padding-left: 20px; line-height: 1.5; }
+.sync-help li { margin: 4px 0; }
+.sync-help code { padding: 0 .3em; border-radius: 4px; background: var(--line); font-size: .92em; }

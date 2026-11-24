@@ -1,21 +1,37 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Phase 0 Check",
-  "version": "0.0.1",
-  "identifier": "com.canvasplanner.phase0",
+  "productName": "Canvas Planner",
+  "version": "0.1.0",
+  "identifier": "com.canvasplanner.desktop",
   "build": {
     "frontendDist": "../src"
   },
   "app": {
     "withGlobalTauri": true,
     "windows": [
-      { "title": "Canvas Planner – Phase 0 Check", "width": 820, "height": 760 }
+      {
+        "title": "Canvas Planner",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 720,
+        "minHeight": 480
+      }
     ],
-    "security": { "csp": null }
+    "security": {
+      "csp": null
+    }
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"]
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

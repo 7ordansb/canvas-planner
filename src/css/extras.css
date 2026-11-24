@@ -1,0 +1,58 @@
+/* styles for js/extras.js */
+
+/* ---------- Toolbar ---------- */
+#toolbar-slot > .extras-tool { padding: 7px 10px; min-width: 2.4em; }
+#toolbar-slot > .extras-tool[hidden], .extras-search[hidden] { display: none; }
+
+.extras-search {
+  display: flex; align-items: center; gap: 4px;
+  padding: 3px 4px 3px 10px;
+}
+.extras-search-input {
+  width: 160px; padding: 4px 2px;
+  border: none; outline: none; background: transparent;
+}
+.extras-search-input::-webkit-search-cancel-button { display: none; }
+.extras-search-count {
+  font-size: 12px; color: var(--muted); white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.extras-search-count:empty { display: none; }
+.extras-search-close {
+  padding: 2px 8px; background: transparent; color: var(--muted);
+  font-size: 16px; line-height: 1;
+}
+
+/* ---------- Modals ---------- */
+.modal .extras-h3 { margin: 18px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.modal .extras-h3:first-child { margin-top: 0; }
+
+.extras-keys { width: 100%; border-collapse: collapse; }
+.extras-keys td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.extras-keys td:last-child { text-align: right; color: var(--muted); padding-left: 12px; }
+.modal kbd {
+  display: inline-block; min-width: 1.2em; padding: 1px 6px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: center; color: var(--ink);
+  border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--bg);
+}
+.extras-growth { margin: 0; padding-left: 18px; line-height: 1.5; }
+.extras-growth li { margin: 3px 0; }
+
+.extras-about { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 0; }
+.extras-about dt { color: var(--muted); }
+.extras-about dd { margin: 0; min-width: 0; }
+.extras-folder { display: flex; gap: 8px; align-items: center; }
+.extras-path {
+  flex: 1; min-width: 0; overflow-wrap: anywhere;
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.extras-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.extras-confirm {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.extras-confirm[hidden] { display: none; }
+.extras-confirm > span { flex: 1 1 100%; }

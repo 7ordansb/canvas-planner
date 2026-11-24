@@ -1,16 +1,174 @@
-:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d2030; background: #f6f5f1; }
-@media (prefers-color-scheme: dark) { :root { color: #e7e7ee; background: #1c1e28; } input { background: #2a2d3a; color: inherit; } }
-main { max-width: 720px; margin: 0 auto; padding: 24px; }
-h1 { font-size: 1.4rem; margin: 0 0 6px; }
-.lead { margin: 0 0 18px; opacity: .8; }
-.buttons { display: flex; gap: 10px; margin-bottom: 16px; }
-button { font: inherit; padding: 8px 16px; border-radius: 8px; border: none; background: #f0b429; color: #1d2030; font-weight: 600; cursor: pointer; }
-button.secondary { background: transparent; border: 1px solid currentColor; color: inherit; font-weight: 500; }
-ul { list-style: none; padding: 0; margin: 0 0 16px; }
-li { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid #8884; }
-li .detail { grid-column: 2; font-size: .85rem; opacity: .75; word-break: break-all; }
-details { margin-top: 12px; }
-summary { cursor: pointer; font-weight: 600; }
-label { display: block; margin: 10px 0; font-size: .9rem; }
-input { display: block; width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8888; }
-.hint { font-size: .85rem; opacity: .8; }
+:root {
+  --bg: #f3f1ea;
+  --dot: #00000020;
+  --ink: #1f2230;
+  --muted: #1f223099;
+  --surface: #fffdf8;
+  --line: #0000001a;
+  --accent: #2f6fed;
+  --danger: #c2372b;
+  --shadow: 0 1px 2px #0000001a, 0 6px 24px #0000001a;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  color: var(--ink);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1d26;
+    --dot: #ffffff1c;
+    --ink: #e8e8ef;
+    --muted: #e8e8ef99;
+    --surface: #262938;
+    --line: #ffffff1a;
+    --shadow: 0 1px 2px #0006, 0 6px 24px #0005;
+  }
+}
+
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+button, input, textarea, select { font: inherit; color: inherit; }
+
+/* ---------- Canvas ---------- */
+#canvas {
+  position: fixed; inset: 0;
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.5px);
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+}
+#canvas.no-grid { background-image: none; }
+#canvas.panning { cursor: grabbing; }
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+
+#hint {
+  position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  pointer-events: none; color: var(--muted); font-size: 18px;
+}
+#hint[hidden] { display: none; }
+
+/* ---------- Cards ---------- */
+.card {
+  --s: 1;
+  --hue: 50;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: calc(190px * var(--s));
+  min-height: calc(72px * var(--s));
+  padding: calc(12px * var(--s)) calc(14px * var(--s)) calc(12px * var(--s)) calc(40px * var(--s));
+  font-size: calc(15px * var(--s));
+  border-radius: calc(10px * var(--s));
+  background: hsl(var(--hue) 92% 84%);
+  color: #1f2230;
+  box-shadow: 0 1px 2px #00000026, 0 calc(4px * var(--s)) calc(16px * var(--s)) #00000024;
+  cursor: grab;
+  transition: width .6s ease, min-height .6s ease, font-size .6s ease, padding .6s ease,
+              border-radius .6s ease, background-color .6s ease, opacity .3s ease;
+}
+.card.dragging { cursor: grabbing; transition: none; }
+.card.selected { outline: 3px solid var(--accent); outline-offset: 2px; }
+.card.overdue { box-shadow: 0 0 0 calc(2px * var(--s)) hsl(0 75% 45%), 0 calc(4px * var(--s)) calc(16px * var(--s)) #00000030; }
+.card.done { background: #d8d8d8; opacity: .6; }
+.card.done .title { text-decoration: line-through; }
+.card.search-dim { opacity: .18; }
+.card.search-hit { outline: 3px solid #f0b429; outline-offset: 2px; }
+
+.card .check {
+  position: absolute;
+  left: calc(12px * var(--s)); top: calc(13px * var(--s));
+  width: calc(18px * var(--s)); height: calc(18px * var(--s));
+  padding: 0; border-radius: 50%;
+  border: calc(2px * var(--s)) solid #1f223088;
+  background: transparent; cursor: pointer;
+  display: grid; place-items: center;
+  font-size: calc(11px * var(--s)); line-height: 1; color: #fff;
+}
+.card .check:hover { background: #1f223018; }
+.card.done .check { background: #3f8f4f; border-color: #3f8f4f; }
+.card .title { font-weight: 600; line-height: 1.25; white-space: pre-wrap; overflow-wrap: anywhere; }
+.card .title.placeholder { opacity: .45; font-style: italic; font-weight: 500; }
+.card .meta { margin-top: .4em; font-size: .75em; opacity: .7; }
+.card .meta:empty { display: none; }
+.card .badge {
+  display: inline-block; margin-top: .4em; margin-right: .3em; padding: .05em .45em;
+  font-size: .68em; border-radius: 1em; background: #1f223014;
+}
+
+/* ---------- Toolbar ---------- */
+#toolbar {
+  position: fixed; top: 12px; left: 12px; right: 340px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  pointer-events: none;
+}
+#toolbar > *, #toolbar-slot > * { pointer-events: auto; }
+#toolbar-slot { display: contents; }
+#toolbar > button, #toolbar > label, #toolbar > span, #toolbar-slot > * {
+  background: var(--surface); box-shadow: var(--shadow); border-radius: 10px;
+}
+#zoom-label { padding: 7px 10px; min-width: 3.2em; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+.toggle, .timetravel { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; }
+.timetravel input { width: 110px; }
+#time-label { min-width: 4.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+button {
+  border: none; border-radius: 10px; padding: 7px 12px; cursor: pointer;
+  background: var(--surface); color: var(--ink);
+}
+button:hover { filter: brightness(.96); }
+button.primary, #toolbar > #btn-new { background: #f0b429; color: #1f2230; font-weight: 600; }
+button.ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+button.small { padding: 4px 9px; font-size: 12px; }
+button.danger { background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px currentColor; }
+button:disabled { opacity: .5; cursor: default; }
+
+/* ---------- Side panel ---------- */
+#panel {
+  position: fixed; top: 12px; right: 12px; bottom: 12px; width: 300px;
+  box-sizing: border-box; padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+  background: var(--surface); border-radius: 14px; box-shadow: var(--shadow);
+  overflow: auto;
+}
+#panel[hidden] { display: none; }
+#panel textarea, #panel input[type="date"] {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent; resize: vertical;
+}
+#f-title { font-size: 17px; font-weight: 600; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field > span { font-size: 12px; color: var(--muted); }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > input { flex: 1; }
+#f-info { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; padding: 9px 12px 9px 16px;
+  background: #1f2230; color: #fff; border-radius: 10px; box-shadow: var(--shadow);
+  z-index: 1000;
+}
+#toast[hidden] { display: none; }
+#toast button { color: #fff; box-shadow: inset 0 0 0 1px #ffffff55; }
+#toast button:empty { display: none; }
+
+/* ---------- Modals (shared by feature modules via app.openModal) ---------- */
+.modal-backdrop {
+  position: fixed; inset: 0; z-index: 900;
+  display: grid; place-items: center;
+  background: #0000004d;
+}
+.modal {
+  width: min(560px, calc(100vw - 40px)); max-height: calc(100vh - 60px);
+  box-sizing: border-box; overflow: auto;
+  padding: 20px; border-radius: 14px;
+  background: var(--surface); box-shadow: var(--shadow);
+}
+.modal h2 { margin: 0 0 14px; font-size: 18px; }
+.modal .modal-close { float: right; margin: -6px -6px 0 0; }
+.modal input[type="text"], .modal input[type="password"], .modal input[type="search"],
+.modal textarea, .modal select {
+  width: 100%; box-sizing: border-box; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent;
+}
+.modal label { display: block; margin: 10px 0; }
+.modal .hint { font-size: 12px; color: var(--muted); }
+.modal .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

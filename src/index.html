@@ -3,30 +3,54 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Phase 0 Check</title>
+  <title>Canvas Planner</title>
   <link rel="stylesheet" href="style.css" />
+  <!-- Feature styles (each feature module owns its own file) -->
+  <link rel="stylesheet" href="css/sync.css" />
+  <link rel="stylesheet" href="css/importer.css" />
+  <link rel="stylesheet" href="css/extras.css" />
 </head>
 <body>
-  <main>
-    <h1>Canvas Planner — Phase 0 Check</h1>
-    <p class="lead">If you can read this, the app launched. Press <b>Run checks</b>, then <b>Copy results</b> and paste them back to Claude.</p>
+  <div id="canvas"><div id="world"></div></div>
+  <div id="hint">Double-click anywhere to add a task</div>
 
-    <div class="buttons">
-      <button id="run">Run checks</button>
-      <button id="copy" class="secondary">Copy results</button>
+  <header id="toolbar">
+    <button id="btn-new" title="New task (N)">+ New task</button>
+    <button id="btn-fit" title="Zoom to fit (F)">Fit</button>
+    <span id="zoom-label" title="Zoom">100%</span>
+    <label class="toggle"><input type="checkbox" id="chk-hide-done" /> Hide done</label>
+    <label class="timetravel" title="Preview how cards will grow over the coming days">
+      <span>Preview</span>
+      <input type="range" id="time-travel" min="0" max="30" value="0" />
+      <span id="time-label">today</span>
+    </label>
+    <!-- Feature modules add their own buttons here -->
+    <div id="toolbar-slot"></div>
+  </header>
+
+  <aside id="panel" hidden>
+    <textarea id="f-title" rows="2" placeholder="What needs doing?"></textarea>
+    <div class="field">
+      <span>Due date</span>
+      <div class="row">
+        <input type="date" id="f-due" />
+        <button id="btn-clear-due" class="ghost small">Clear</button>
+      </div>
     </div>
+    <label class="field">
+      <span>Notes</span>
+      <textarea id="f-notes" rows="7" placeholder="Details, links, sub-steps…"></textarea>
+    </label>
+    <p id="f-info"></p>
+    <div class="row">
+      <button id="btn-complete">Mark complete</button>
+      <button id="btn-delete" class="danger">Delete</button>
+    </div>
+  </aside>
 
-    <ul id="results"></ul>
+  <div id="toast" hidden><span id="toast-msg"></span><button id="toast-action" class="ghost small"></button></div>
+  <div id="modal-root"></div>
 
-    <details>
-      <summary>Optional: test writing to a GitHub repo</summary>
-      <p class="hint">Use a <b>fine-grained token</b> that only has access to one private test repo, with “Contents: Read and write”. The token is used once and not stored.</p>
-      <label>Repo (owner/name) <input id="repo" placeholder="yourname/canvas-planner-data" autocomplete="off" /></label>
-      <label>Token <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" /></label>
-      <button id="ghwrite">Write test file</button>
-      <ul id="ghresults"></ul>
-    </details>
-  </main>
-  <script src="main.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>
