@@ -243,7 +243,7 @@ async function listRemoteAttachments(token, { repo, branch }, dir) {
 async function uploadAttachment(token, { repo, branch }, dir, id, sizeHint) {
   if (sizeHint > MAX_UPLOAD_BYTES) return "too-big";
   const b64 = await app.attachments.read(id);
-  if (!b64) throw new SyncError("error", `File ${id} isn't on this computer`);
+  if (b64 === null) throw new SyncError("error", `File ${id} isn't on this computer`);
   if (Math.floor((b64.replace(/\s+/g, "").length * 3) / 4) > MAX_UPLOAD_BYTES) return "too-big";
   const r = await gh(token, "PUT", `${repoUrl(repo)}/contents/${encPath(`${dir}/${id}`)}`, {
     message: "Add attachment", content: b64.replace(/\s+/g, ""), branch,

@@ -84,7 +84,7 @@ fn save_attachment(app: tauri::AppHandle, id: String, data: String) -> Result<()
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(clean)
         .map_err(|e| format!("bad attachment data: {e}"))?;
-    let tmp = path.with_extension("part");
+    let tmp = path.with_file_name(format!(".{id}.part"));
     std::fs::write(&tmp, bytes).map_err(|e| format!("could not save attachment: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("could not save attachment: {e}"))
 }
@@ -109,7 +109,7 @@ fn list_attachments(app: tauri::AppHandle) -> Result<Vec<String>, String> {
         let entry = entry.map_err(|e| e.to_string())?;
         if entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
             let name = entry.file_name().to_string_lossy().to_string();
-            if !name.ends_with(".part") {
+            if !name.starts_with('.') {
                 out.push(name);
             }
         }

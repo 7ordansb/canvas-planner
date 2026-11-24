@@ -369,6 +369,10 @@ function renderCard(task, el, i, t) {
         el.classList.toggle("missing", !url);
         if (url) el.querySelector("img").src = url;
         links.renderLinksSoon();
+      }).catch((error) => {
+        delete el.dataset.loaded;
+        el.classList.add("missing");
+        console.warn("Could not load canvas image", error);
       });
     }
   } else if (task.kind === "file") {
@@ -1058,7 +1062,7 @@ canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("pointerleave", () => { if (!drag) hideHandle(); });
 
 canvas.addEventListener("click", (e) => {
-  const hit = document.elementFromPoint(e.clientX, e.clientY);
+  const hit = e.detail ? document.elementFromPoint(e.clientX, e.clientY) : e.target;
   const check = hit?.closest(".check");
   if (check) return toggleComplete(check.closest(".card").dataset.id);
   const linkEl = hit?.closest(".link-chip, .link-hit");

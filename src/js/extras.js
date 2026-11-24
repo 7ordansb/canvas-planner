@@ -157,8 +157,7 @@ export async function init(app) {
     if (!matches.length) { updateCount(); return; }
     cursor = cursor < 0 ? (dir > 0 ? 0 : matches.length - 1) : (cursor + dir + matches.length) % matches.length;
     const id = matches[cursor];
-    app.select(id);
-    app.focusTask(id);
+    app.revealTask(id);
     updateCount();
   }
 
@@ -236,13 +235,26 @@ export async function init(app) {
       ]],
       ["Tasks", [
         ["New task", `${k("N")}, or double-click empty space`],
-        ["Edit a task", "Double-click it"],
+        ["Edit a task in place", "Double-click it"],
+        ["Switch between title and notes", k("Tab")],
+        ["Finish editing the title", k("Enter")],
+        ["Finish editing from title or notes", `${k(MOD, "Enter")} or ${k("Esc")}`],
         ["Move a task", "Drag it"],
         ["Edit title of selected task", k("Enter")],
         ["Mark selected done / not done", k("Space")],
         ["Delete selected task", `${k("Delete")} or ${k("Backspace")}`],
         ["Undo delete", k(MOD, "Z")],
         ["Deselect / leave a text field", k("Esc")],
+      ]],
+      ["Links, attachments and sub-canvases", [
+        ["Add a linked card", "Hover near a card’s edge and click +"],
+        ["Link cards or create a linked card", "Drag from + to a card or empty space"],
+        ["Change or remove a link", "Click its label"],
+        ["Add a file or image", `Drop it on the canvas or paste with ${k(MOD, "V")}`],
+        ["Open a file or image", "Double-click it"],
+        ["Open a sub-canvas", `Click it, or select it and press ${k("Enter")}`],
+        ["Go up one canvas", `Click the breadcrumb or press ${k("Esc")} with no card selected`],
+        ["Move a card into a sub-canvas", "Drag it onto the sub-canvas card"],
       ]],
       ["Search", [
         ["Open search", `${k(MOD, "F")} or ${k("/")}`],

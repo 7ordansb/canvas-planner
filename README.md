@@ -13,7 +13,11 @@ It runs on Windows and macOS **without installing anything**.
 
 ## Using it
 - **Double-click** empty space to add a task. **Drag** cards to move them. Drag empty space or scroll to move around. Pinch or Ctrl+scroll to zoom.
-- Click a card to edit its title, due date and notes in the side panel. Click its circle to tick it off.
+- Type directly on a new task or double-click an existing task to edit it. Press **Tab** to switch between its title and notes. Use the side panel to set a due date and click the card’s circle to complete it.
+- Set a card’s colour in the side panel or right-click menu. When a canvas uses multiple colours, use the toolbar to show or hide them.
+- Hover near a card’s edge to find **+**. Click it to add a linked task, image, file, or sub-canvas. Drag from **+** onto another card to link them, and click the link label to change its type or remove it.
+- Drop or paste files onto the canvas and double-click their cards to open them.
+- Click a sub-canvas to open it, use the breadcrumb to go back, or drag a card onto a sub-canvas to move it inside. Press **/** to search across canvases.
 - **Preview** slider: see how big your cards will be in the coming days.
 - Press **?** for all keyboard shortcuts.
 

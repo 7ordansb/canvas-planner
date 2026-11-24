@@ -53,7 +53,8 @@ export const attachments = {
   async open(id, mime) {
     if (invoke) return invoke("open_attachment", { id });
     const url = await imageUrl(id, mime);
-    if (url) window.open(url, "_blank");
+    if (!url) throw new Error("This file hasn't been downloaded to this computer yet.");
+    window.open(url, "_blank");
   },
   /** Tell the UI an attachment arrived (e.g. downloaded by sync) so images refresh. */
   changed(id) {
@@ -69,15 +70,21 @@ export const attachments = {
 export async function imageUrl(id, mime = "") {
   const cached = urlCache.get(id);
   if (cached) return cached;
-  const p = (async () => {
-    const b64 = await attachments.read(id);
-    if (!b64) { urlCache.delete(id); return null; }
+  const pending = attachments.read(id).then((b64) => {
+    if (urlCache.get(id) !== pending) return imageUrl(id, mime);
+    if (b64 === null) {
+      urlCache.delete(id);
+      return null;
+    }
     const url = URL.createObjectURL(new Blob([base64ToBytes(b64)], { type: mime || "application/octet-stream" }));
     urlCache.set(id, url);
     return url;
-  })();
-  urlCache.set(id, p);
-  return p;
+  }).catch((error) => {
+    if (urlCache.get(id) === pending) urlCache.delete(id);
+    throw error;
+  });
+  urlCache.set(id, pending);
+  return pending;
 }
 
 /** Store a File (from a picker, drop or paste). Returns fields for a new canvas element. */

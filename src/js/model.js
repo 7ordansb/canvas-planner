@@ -26,7 +26,7 @@ export const KINDS = ["task", "image", "file", "canvas"];
  *   or      – either one is enough: when one is done, the other is "covered"
  */
 export const LINK_TYPES = {
-  related: { label: "Related", chip: "", directed: false },
+  related: { label: "Related", chip: "Related", directed: false },
   parent: { label: "Parent → subtask", chip: "subtask", directed: true },
   blocks: { label: "Dependency", chip: "blocks", directed: true },
   or: { label: "Optional (OR)", chip: "OR", directed: false },
