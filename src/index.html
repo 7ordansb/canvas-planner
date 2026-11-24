@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Phase 0 Check</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <h1>Canvas Planner — Phase 0 Check</h1>
+    <p class="lead">If you can read this, the app launched. Press <b>Run checks</b>, then <b>Copy results</b> and paste them back to Claude.</p>
+
+    <div class="buttons">
+      <button id="run">Run checks</button>
+      <button id="copy" class="secondary">Copy results</button>
+    </div>
+
+    <ul id="results"></ul>
+
+    <details>
+      <summary>Optional: test writing to a GitHub repo</summary>
+      <p class="hint">Use a <b>fine-grained token</b> that only has access to one private test repo, with “Contents: Read and write”. The token is used once and not stored.</p>
+      <label>Repo (owner/name) <input id="repo" placeholder="yourname/canvas-planner-data" autocomplete="off" /></label>
+      <label>Token <input id="token" type="password" placeholder="github_pat_…" autocomplete="off" /></label>
+      <button id="ghwrite">Write test file</button>
+      <ul id="ghresults"></ul>
+    </details>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>

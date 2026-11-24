@@ -1,0 +1,16 @@
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d2030; background: #f6f5f1; }
+@media (prefers-color-scheme: dark) { :root { color: #e7e7ee; background: #1c1e28; } input { background: #2a2d3a; color: inherit; } }
+main { max-width: 720px; margin: 0 auto; padding: 24px; }
+h1 { font-size: 1.4rem; margin: 0 0 6px; }
+.lead { margin: 0 0 18px; opacity: .8; }
+.buttons { display: flex; gap: 10px; margin-bottom: 16px; }
+button { font: inherit; padding: 8px 16px; border-radius: 8px; border: none; background: #f0b429; color: #1d2030; font-weight: 600; cursor: pointer; }
+button.secondary { background: transparent; border: 1px solid currentColor; color: inherit; font-weight: 500; }
+ul { list-style: none; padding: 0; margin: 0 0 16px; }
+li { display: grid; grid-template-columns: 28px 1fr; gap: 4px 8px; padding: 8px 0; border-bottom: 1px solid #8884; }
+li .detail { grid-column: 2; font-size: .85rem; opacity: .75; word-break: break-all; }
+details { margin-top: 12px; }
+summary { cursor: pointer; font-weight: 600; }
+label { display: block; margin: 10px 0; font-size: .9rem; }
+input { display: block; width: 100%; box-sizing: border-box; font: inherit; padding: 6px 8px; margin-top: 4px; border-radius: 6px; border: 1px solid #8888; }
+.hint { font-size: .85rem; opacity: .8; }

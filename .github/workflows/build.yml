@@ -1,0 +1,58 @@
+name: Build portable apps
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: mac
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.name == 'mac' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      # macOS: one .app that runs on both Apple Silicon and Intel Macs, zipped.
+      - name: Build Mac app
+        if: matrix.name == 'mac'
+        run: |
+          npx tauri build --target universal-apple-darwin --bundles app
+          mkdir -p dist
+          ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Phase 0 Check.app" dist/Phase0Check-mac.zip
+
+      # Windows: a single portable .exe, no installer.
+      - name: Build Windows exe
+        if: matrix.name == 'windows'
+        shell: bash
+        run: |
+          npx tauri build --no-bundle
+          mkdir -p dist
+          cp src-tauri/target/release/phase0-check.exe dist/Phase0Check.exe
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Phase0Check-${{ matrix.name }}
+          path: dist/*
