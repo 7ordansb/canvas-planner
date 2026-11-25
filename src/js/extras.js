@@ -1,7 +1,8 @@
 // Canvas Planner – extras: search, keyboard-shortcut help, settings/about
 // (diagnostics, clear completed, JSON backup) and card tooltips.
 
-import { GROWTH, daysUntilDue } from "./growth.js";
+import { daysUntilDue } from "./growth.js";
+import { isTask } from "./model.js";
 
 // ---------- Error capture (installed first thing in init) ----------
 const MAX_ERRORS = 20;
@@ -113,7 +114,7 @@ export async function init(app) {
     const hide = hideDoneOn();
     const keepId = cursor >= 0 ? matches[cursor] : null;
     matches = store.board.tasks
-      .filter((t) => matchesTask(t, q) && !(hide && t.completedAt && t.id !== app.getSelectedId()))
+      .filter((t) => matchesTask(t, q) && !(hide && isTask(t) && t.completedAt && t.id !== app.getSelectedId()))
       .sort((a, b) => a.y - b.y || a.x - b.x)
       .map((t) => t.id);
     cursor = keepId ? matches.indexOf(keepId) : -1;
@@ -212,10 +213,10 @@ export async function init(app) {
   helpBtn.addEventListener("click", () => openHelp());
 
   function growthText() {
-    const g = GROWTH;
+    const g = app.getGrowth();
     const ageDays = Math.round(g.ageMax / g.agePerDay);
     return [
-      `<b>Age:</b> a card grows ${pct(g.agePerDay)} for each day it exists, up to +${pct(g.ageMax)} (after about ${plural(ageDays, "day")}).`,
+      g.agePerDay === 0 ? "Growth from age is off." : `<b>Age:</b> a card grows ${pct(g.agePerDay)} for each day it exists, up to +${pct(g.ageMax)} (after about ${plural(ageDays, "day")}).`,
       `<b>Due date:</b> starting ${plural(g.dueWindowDays, "day")} before it's due, it grows steadily to +${pct(g.dueMax)} on the due date.`,
       `<b>Overdue:</b> it keeps growing ${pct(g.overduePerDay)} per day, up to +${pct(g.overdueMax)} more, and gets a red outline.`,
       `Age and due-date growth add up, capped at ${g.maxScale}× normal size. Colour shifts from yellow to red as a card grows.`,
@@ -234,12 +235,14 @@ export async function init(app) {
         ["Zoom to fit all cards", k("F")],
       ]],
       ["Tasks", [
-        ["New task", `${k("N")}, or double-click empty space`],
+        ["New note or task", `${k("N")}, or double-click empty space`],
         ["Edit a task in place", "Double-click it"],
         ["Switch between title and notes", k("Tab")],
         ["Finish editing the title", k("Enter")],
         ["Finish editing from title or notes", `${k(MOD, "Enter")} or ${k("Esc")}`],
         ["Move a task", "Drag it"],
+        ["Resize a note or label", "Drag its bottom-right corner"],
+        ["Add a label", "Right-click empty canvas space and choose Label"],
         ["Edit title of selected task", k("Enter")],
         ["Mark selected done / not done", k("Space")],
         ["Delete selected task", `${k("Delete")} or ${k("Backspace")}`],
@@ -274,7 +277,7 @@ export async function init(app) {
   }
 
   // ===== Settings / About =====
-  const gearBtn = el("button", { id: "btn-extras-settings", class: "extras-tool", title: "Settings & about", "aria-label": "Settings and about", text: "⚙" });
+  const gearBtn = el("button", { id: "btn-extras-settings", class: "extras-tool", title: "Settings", "aria-label": "Settings", text: "⚙" });
   gearBtn.addEventListener("click", () => openSettings());
 
   async function appVersion() {
@@ -294,13 +297,14 @@ export async function init(app) {
     const now = Date.now();
     let open = 0, done = 0, overdue = 0;
     for (const t of store.board.tasks) {
+      if (!isTask(t)) continue;
       if (t.completedAt) done++;
       else {
         open++;
         if (t.due && daysUntilDue(t.due, now) < 0) overdue++;
       }
     }
-    return { open, done, overdue, total: store.board.tasks.length, tombstones: Object.keys(store.board.deleted || {}).length };
+    return { open, done, overdue, total: open + done, tombstones: Object.keys(store.board.deleted || {}).length };
   }
 
   function featureModules() {
@@ -362,7 +366,72 @@ export async function init(app) {
     const copyFolderBtn = el("button", { class: "ghost small", text: "Copy", disabled: "" });
     const c = taskCounts();
 
+    const defaultTask = el("input", { type: "checkbox" });
+    defaultTask.checked = app.canvasSettings.get("defaultTaskMode", false);
+    defaultTask.addEventListener("change", () => {
+      app.canvasSettings.set("defaultTaskMode", defaultTask.checked);
+      app.updateNewButton();
+    });
+    const hideDone = el("input", { type: "checkbox" });
+    hideDone.checked = app.getHideDone();
+    hideDone.addEventListener("change", () => app.setHideDone(hideDone.checked));
+    const theme = el("select", { "aria-label": "Colour theme" });
+    for (const [value, text] of [["system", "Use system setting"], ["light", "Light paper"], ["dark", "Charcoal"]]) {
+      theme.append(el("option", { value, text }));
+    }
+    theme.value = localStorage.getItem("pinboard-theme") || "system";
+    theme.onchange = () => {
+      localStorage.setItem("pinboard-theme", theme.value);
+      document.documentElement.dataset.theme = theme.value;
+    };
+    body.append(el("h3", {class: "extras-h3", text: "Appearance"}), el("label", {}, ["Colour theme", theme]));
+    const workspace = app.getWorkspace();
+    body.append(el("h3", { class: "extras-h3", text: "Canvas" }));
+    if (workspace) {
+      const name = el("input", { type: "text", maxlength: "100" });
+      name.value = workspace.title;
+      name.addEventListener("change", () => {
+        name.value = name.value.trim() || workspace.title;
+        store.update(workspace.id, { title: name.value });
+        app.render();
+      });
+      body.append(el("label", {}, [el("span", { text: "Canvas name" }), name]));
+    }
     body.append(
+      el("label", { class: "settings-toggle" }, [defaultTask, document.createTextNode("Start new notes in task mode")]),
+      el("label", { class: "settings-toggle" }, [hideDone, document.createTextNode("Hide completed tasks")]),
+      el("h3", { class: "extras-h3", text: "Task growth" }),
+      el("p", { class: "hint", text: app.isDashboard() ? "Defaults for new canvases on this device. These also apply to the original canvas." : "These settings apply on this device to this canvas and its sub-canvases." }),
+    );
+
+    const growthFields = [
+      ["agePerDay", "Size increase per day (%)", 100, 100],
+      ["ageMax", "Maximum increase from age (%)", 100, 260],
+      ["dueWindowDays", "Days before due-date growth starts", 1, 90],
+      ["overduePerDay", "Extra increase per overdue day (%)", 100, 100],
+    ];
+    const fields = el("div", { class: "settings-growth" });
+    const refreshGrowth = [];
+    for (const [key, label, multiplier, max] of growthFields) {
+      const input = el("input", { type: "number", min: "0", max: String(max), step: "1" });
+      const refresh = () => { input.value = String(Math.round(app.getGrowth()[key] * multiplier)); };
+      refresh();
+      refreshGrowth.push(refresh);
+      input.addEventListener("change", () => {
+        const value = input.valueAsNumber;
+        if (input.validity.valid && Number.isFinite(value)) {
+          app.setGrowth({ ...app.getGrowth(), [key]: value / multiplier });
+        }
+        refresh();
+      });
+      fields.append(el("label", {}, [el("span", { text: label }), input]));
+    }
+    const resetGrowth = el("button", { class: "ghost small", text: "Reset growth to defaults" });
+    resetGrowth.addEventListener("click", () => {
+      app.setGrowth({});
+      refreshGrowth.forEach((refresh) => refresh());
+    });
+    body.append(fields, resetGrowth, el("h3", { class: "extras-h3", text: "About" }),
       el("dl", { class: "extras-about" }, [
         el("dt", { text: "Version" }), el("dd", {}, versionEl),
         el("dt", { text: "Data folder" }), el("dd", { class: "extras-folder" }, [folderEl, copyFolderBtn]),
@@ -380,11 +449,14 @@ export async function init(app) {
     );
 
     // Clear completed (two-step confirm)
+    const entireBoard = app.isDashboard();
+    const completedTasks = () => store.board.tasks.filter((task) =>
+      isTask(task) && task.completedAt && (entireBoard || app.getWorkspace(task.canvasId)?.id === workspace?.id));
     const clearBtn = el("button", { class: "danger small", text: "Clear completed tasks…" });
     const confirmRow = el("div", { class: "extras-confirm", hidden: "" });
     body.append(el("h3", { class: "extras-h3", text: "Clean up" }), el("div", { class: "extras-row" }, [clearBtn]), confirmRow);
 
-    const modal = app.openModal("Settings & about", body);
+    const modal = app.openModal(workspace ? `Settings · ${workspace.title}` : "Settings", body, { fullPage: true, onClose: () => gearBtn.focus() });
 
     appVersion().then((v) => { versionEl.textContent = v; });
     dataFolder().then((p) => {
@@ -409,7 +481,7 @@ export async function init(app) {
     });
 
     clearBtn.addEventListener("click", () => {
-      const n = store.board.tasks.filter((t) => t.completedAt).length;
+      const n = completedTasks().length;
       confirmRow.textContent = "";
       if (!n) {
         confirmRow.append(el("span", { text: "There are no completed tasks." }));
@@ -423,7 +495,7 @@ export async function init(app) {
       clearBtn.disabled = true;
       no.addEventListener("click", () => { confirmRow.hidden = true; clearBtn.disabled = false; });
       yes.addEventListener("click", () => {
-        const ids = store.board.tasks.filter((t) => t.completedAt).map((t) => t.id);
+        const ids = completedTasks().map((t) => t.id);
         if (ids.includes(app.getSelectedId())) app.select(null);
         let removed = 0;
         for (const id of ids) if (store.remove(id)) removed++;

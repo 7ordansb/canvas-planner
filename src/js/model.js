@@ -16,7 +16,9 @@ export const COLOR_BY_KEY = Object.fromEntries(COLORS.map((c) => [c.key, c]));
 export const AUTO = "auto";
 
 /** Kinds of element that can sit on a canvas. */
-export const KINDS = ["task", "image", "file", "canvas"];
+export const KINDS = ["task", "image", "file", "canvas", "label"];
+
+export const isTask = (card) => card?.kind === "task" && card.taskMode !== false;
 
 /**
  * Link types. A link always has a direction (from → to); some types use it.
@@ -26,6 +28,7 @@ export const KINDS = ["task", "image", "file", "canvas"];
  *   or      – either one is enough: when one is done, the other is "covered"
  */
 export const LINK_TYPES = {
+  attachment: { label: "Attachment", chip: "File", directed: false },
   related: { label: "Related", chip: "Related", directed: false },
   parent: { label: "Parent → subtask", chip: "subtask", directed: true },
   blocks: { label: "Dependency", chip: "blocks", directed: true },
@@ -33,3 +36,15 @@ export const LINK_TYPES = {
 };
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+/** Accept HTTP(S) links for notes. Bare domains default to HTTPS. */
+export function webLink(input) {
+  const value = String(input ?? "").trim();
+  if (!value) return null;
+  try {
+    const url = new URL(/^[a-z][a-z\d+.-]*:/i.test(value) ? value : `https://${value}`);
+    return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password ? url.href : null;
+  } catch {
+    return null;
+  }
+}

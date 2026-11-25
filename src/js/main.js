@@ -17,15 +17,17 @@ for (const level of ["error", "warn"]) {
 addEventListener("error", (e) => logErr("error", [e.error || e.message]));
 addEventListener("unhandledrejection", (e) => logErr("unhandledrejection", [e.reason]));
 
-import { growthOf, daysUntilDue, DAY } from "./growth.js";
+import { growthOf, daysUntilDue, DAY, GROWTH } from "./growth.js";
 import * as store from "./store.js";
-import { COLORS, COLOR_BY_KEY, AUTO } from "./model.js";
+import { COLORS, COLOR_BY_KEY, AUTO, isTask, webLink } from "./model.js";
 import { showMenu, closeMenu, isMenuOpen } from "./menus.js";
 import * as links from "./links.js";
+import { renderDashboard } from "./dashboard.js";
 import { attachments, imageUrl, storeFile, pickFile, formatSize } from "./attachments.js";
 
 const $ = (s) => document.querySelector(s);
 const canvas = $("#canvas");
+const dashboard = $("#dashboard");
 const world = $("#world");
 const hint = $("#hint");
 const panel = $("#panel");
@@ -38,8 +40,10 @@ const btnComplete = $("#btn-complete");
 const btnOpen = $("#btn-open");
 const zoomLabel = $("#zoom-label");
 const chkHideDone = $("#chk-hide-done");
-const timeTravel = $("#time-travel");
-const timeLabel = $("#time-label");
+const taskMode = $("#f-task-mode");
+const noteAttachments = $("#f-attachments");
+const webLinkInput = $("#f-link-url");
+const toolbar = $("#toolbar");
 const crumbs = $("#crumbs");
 const filterBar = $("#filter-bar");
 
@@ -48,27 +52,28 @@ const invoke = tauri?.core?.invoke;
 
 // ---------- State ----------
 const cam = { x: innerWidth / 2, y: innerHeight / 2, z: 1 }; // screen = world * z + (x, y)
+let dashboardOpen = true;
 let currentCanvas = null; // id of the sub-canvas being viewed; null = home
 let selectedId = null;
 let editingId = null; // card being edited inline
 let panelTaskId = null;
-let timeOffsetDays = 0;
-let hideDone = localStorage.getItem("hideDone") === "1";
-const hiddenColors = new Set(JSON.parse(localStorage.getItem("hiddenColors") || "[]"));
+let hideDone = false;
+let hiddenColors = new Set();
 const els = new Map(); // element id -> card element (only those visible on this canvas)
 const decorators = []; // feature hooks: (task, el) => void, run on every render
 let rel = links.computeRelations();
 
-const now = () => Date.now() + timeOffsetDays * DAY;
+const now = Date.now;
 const isTyping = (el) => el?.matches?.("input, textarea, select, [contenteditable]");
 const colorKey = (t) => t.color || AUTO;
 const colorable = (t) => t.kind === "task" || t.kind === "canvas";
 
 /** Is this element shown right now (right canvas, not filtered out)? */
 function isVisible(t) {
+  if (t.kind === "canvas" && t.workspace && !t.canvasId) return false;
   if ((t.canvasId ?? null) !== currentCanvas) return false;
   if (t.id === selectedId || t.id === editingId) return true;
-  if (hideDone && t.completedAt) return false;
+  if (hideDone && isTask(t) && t.completedAt) return false;
   if (colorable(t) && hiddenColors.has(colorKey(t))) return false;
   return true;
 }
@@ -76,13 +81,23 @@ function isVisible(t) {
 // ---------- Camera ----------
 const cameraKey = () => (currentCanvas ? `camera:${currentCanvas}` : "camera");
 let camSaveTimer = null;
+let previousZoom;
+function setCardDetail(el) {
+  el.classList.toggle("distant", el.dataset.kind === "task" && el.offsetWidth * cam.z < 100);
+}
+
 function applyCamera() {
+  if (previousZoom !== cam.z) {
+    previousZoom = cam.z;
+    canvas.classList.toggle("hide-link-labels", cam.z < .8);
+    for (const el of els.values()) setCardDetail(el);
+  }
   world.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
   world.style.setProperty("--zinv", String(1 / cam.z));
   const grid = 24 * cam.z;
   canvas.classList.toggle("no-grid", cam.z < 0.35);
   canvas.style.backgroundSize = `${grid}px ${grid}px`;
-  canvas.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
+  canvas.style.backgroundPosition = `${cam.x % grid}px ${cam.y % grid}px`;
   zoomLabel.textContent = `${Math.round(cam.z * 100)}%`;
   clearTimeout(camSaveTimer);
   const key = cameraKey();
@@ -104,8 +119,9 @@ function zoomAt(sx, sy, z) {
 
 /** Visible area of the canvas (excluding the side panel), in screen px. */
 function viewRect() {
-  const right = panel.hidden ? innerWidth : innerWidth - 324;
-  return { left: 0, top: 90, right, bottom: innerHeight };
+  const right = panel.hidden ? innerWidth : panel.getBoundingClientRect().left;
+  const top = Math.min(toolbar.getBoundingClientRect().bottom + 12, innerHeight / 2);
+  return { left: 0, top, right, bottom: innerHeight };
 }
 
 function viewCenterWorld() {
@@ -163,31 +179,134 @@ function canvasPath() {
   return path;
 }
 
-function enterCanvas(id) {
-  if (id && store.get(id)?.kind !== "canvas") return;
-  stopEdit();
+function getWorkspace(id = currentCanvas) {
+  let card = store.get(id);
+  while (card?.canvasId) card = store.get(card.canvasId);
+  return card?.workspace ? card : null;
+}
+
+let canvasAnimation;
+let miniatureAnimation;
+
+function finishCanvasEditing() {
   closeMenu();
+  stopEdit({ silent: true });
   hideHandle();
   if (selectedId) removeIfEmpty(selectedId);
   selectedId = null;
-  localStorage.setItem(cameraKey(), JSON.stringify(cam));
+}
+
+function openDashboard() {
+  if (!dashboardOpen) localStorage.setItem(cameraKey(), JSON.stringify(cam));
+  canvasAnimation?.cancel();
+  miniatureAnimation?.cancel();
+  finishCanvasEditing();
+  dashboardOpen = true;
+  currentCanvas = null;
+  loadCanvasSettings();
+  render();
+  dashboard.focus({ preventScroll: true });
+}
+
+function newWorkspace() {
+  const form = document.createElement("form");
+  form.innerHTML = `<label for="workspace-name">Canvas name</label>
+    <input id="workspace-name" type="text" maxlength="100" required>
+    <div class="actions"><button class="primary">Create canvas</button></div>`;
+  const modal = openModal("New canvas", form);
+  const input = form.querySelector("input");
+  input.focus();
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const title = input.value.trim();
+    if (!title) { input.focus(); return; }
+    const card = createTask({ kind: "canvas", title, canvasId: null, workspace: true, x: 0, y: 0 });
+    for (const [key, fallback] of [["growth", {}], ["defaultTaskMode", false], ["hideDone", false]]) {
+      settings.set(`canvas:${card.id}:${key}`, settings.get(key, fallback));
+    }
+    modal.close();
+    enterCanvas(card.id);
+  });
+}
+
+function enterCanvas(id, preview) {
+  if ((!dashboardOpen && id === currentCanvas) || (id && store.get(id)?.kind !== "canvas")) return;
+  const animate = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const returning = animate && !dashboardOpen && currentCanvas && store.get(currentCanvas)?.canvasId === id ? currentCanvas : null;
+  const origin = animate && preview?.getBoundingClientRect();
+  const miniature = origin && preview.cloneNode(true);
+  finishCanvasEditing();
+  if (!dashboardOpen) localStorage.setItem(cameraKey(), JSON.stringify(cam));
+  dashboardOpen = false;
   currentCanvas = id;
+  loadCanvasSettings();
   const saved = JSON.parse(localStorage.getItem(cameraKey()) || "null");
   render();
   if (saved && Number.isFinite(saved.z)) { Object.assign(cam, saved); applyCamera(); }
   else fit();
+  canvasAnimation?.cancel();
+  miniatureAnimation?.cancel();
+  if (returning) {
+    const target = els.get(returning)?.querySelector(".canvas-miniature");
+    if (target) {
+      const frame = target.getBoundingClientRect();
+      const overlay = target.cloneNode(true);
+      overlay.classList.add("opening-miniature");
+      Object.assign(overlay.style, {left:frame.left+"px", top:frame.top+"px", width:frame.width+"px", height:frame.height+"px", transformOrigin:"top left"});
+      document.body.append(overlay);
+      miniatureAnimation = overlay.animate([
+        {transform:`translate(${-frame.left}px,${-frame.top}px) scale(${innerWidth/frame.width},${innerHeight/frame.height})`},
+        {transform:"none"}
+      ], {duration:280, easing:"cubic-bezier(.2,.7,.3,1)"});
+      miniatureAnimation.onfinish = miniatureAnimation.oncancel = () => overlay.remove();
+      return;
+    }
+  }
+  if (animate) {
+    const area = canvas.getBoundingClientRect();
+    const inset = origin && [
+      origin.top - area.top, area.right - origin.right,
+      area.bottom - origin.bottom, origin.left - area.left,
+    ].map((value) => `${Math.max(0, value)}px`).join(" ");
+    canvasAnimation = canvas.animate(inset ? [
+      { clipPath: `inset(${inset} round 12px)`, opacity: .7 },
+      { clipPath: "inset(0px round 0px)", opacity: 1 },
+    ] : [{ opacity: .55 }, { opacity: 1 }], {
+      duration: inset ? 340 : 150, easing: "cubic-bezier(.22,.8,.25,1)",
+    });
+    if (miniature && origin.width && origin.height) {
+      miniature.classList.add("opening-miniature");
+      Object.assign(miniature.style, {
+        left: `${origin.left}px`, top: `${origin.top}px`, width: `${origin.width}px`, height: `${origin.height}px`,
+      });
+      document.body.append(miniature);
+      miniatureAnimation = miniature.animate([
+        { opacity: 1, transform: "scale(1)" },
+        { opacity: 0, transform: "scale(1.4)" },
+      ], { duration: 220, easing: "ease-out" });
+      miniatureAnimation.onfinish = miniatureAnimation.oncancel = () => miniature.remove();
+    }
+  }
 }
 
+let crumbsSignature;
 function renderCrumbs() {
   const path = canvasPath();
-  crumbs.hidden = !path.length;
-  if (!path.length) return;
+  const signature = JSON.stringify(path.map(({ id, title }) => [id, title]));
+  if (signature === crumbsSignature) return;
+  crumbsSignature = signature;
   crumbs.textContent = "";
   const home = document.createElement("button");
-  home.textContent = "⌂ Home";
-  home.title = "Back to the home canvas";
-  home.addEventListener("click", () => enterCanvas(null));
+  home.textContent = "← Dashboard";
+  home.className = "back-dashboard";
+  home.addEventListener("click", openDashboard);
   crumbs.appendChild(home);
+  if (!getWorkspace()) {
+    const original = document.createElement(currentCanvas ? "button" : "span");
+    original.textContent = "Original canvas";
+    if (currentCanvas) original.addEventListener("click", () => enterCanvas(null));
+    crumbs.append("›", original);
+  }
   path.forEach((c, i) => {
     crumbs.appendChild(Object.assign(document.createElement("span"), { className: "crumb-sep", textContent: "›" }));
     if (i < path.length - 1) {
@@ -199,6 +318,7 @@ function renderCrumbs() {
       crumbs.appendChild(Object.assign(document.createElement("span"), { className: "crumb-current", textContent: c.title || "Untitled canvas" }));
     }
   });
+  crumbs.scrollLeft = crumbs.scrollWidth;
 }
 
 /** Move an element into a sub-canvas (links to things outside it are removed). */
@@ -213,7 +333,7 @@ function moveToCanvas(taskId, canvasId, { x, y } = {}) {
       y = kids.reduce((s, k) => s + k.y, 0) / kids.length;
     } else { x = 0; y = 0; }
   }
-  const linkIds = store.board.links.filter((l) => l.from === taskId || l.to === taskId).map((l) => l.id);
+  const linkIds = store.board.links.filter((l) => l.type !== "attachment" && (l.from === taskId || l.to === taskId)).map((l) => l.id);
   const snap = linkIds.length ? store.removeMany({ linkIds }) : null;
   store.update(taskId, { canvasId: canvasId ?? null, x, y });
   if (selectedId === taskId) selectedId = null;
@@ -269,10 +389,13 @@ function createCardEl(task) {
       el.innerHTML = `<div class="file-icon"></div><div class="file-info"><div class="title"></div><div class="meta"></div></div>`;
       break;
     case "canvas":
-      el.innerHTML = `<div class="canvas-icon">▦</div><div class="title"></div><div class="meta"></div><div class="canvas-open">Click to open</div>`;
+      el.innerHTML = `<div class="canvas-miniature"></div><div class="title"></div><div class="meta"></div>`;
+      break;
+    case "label":
+      el.innerHTML = `<div class="title"></div><span class="resize-grip" title="Drag to resize"></span>`;
       break;
     default:
-      el.innerHTML = `<button class="check" title="Mark complete"></button><div class="title"></div><div class="notes"></div><div class="meta"></div><div class="badges"></div>`;
+      el.innerHTML = `<button class="check" title="Mark complete"></button><div class="title"></div><div class="notes"></div><div class="meta"></div><div class="badges"></div><span class="resize-grip" title="Drag to resize"></span>`;
   }
   return el;
 }
@@ -290,40 +413,103 @@ function paint(el, task, autoHue) {
   el.style.setProperty("--sat", `${c ? c.sat : 92}%`);
 }
 
-/** Summary + growth for a sub-canvas card, from what's directly inside it. */
+/** Summary and growth include tasks on every level of the sub-canvas. */
 function canvasStats(id, t) {
   let open = 0, done = 0, overdue = 0, maxScale = 1, maxUrgency = 0;
-  for (const k of store.board.tasks) {
-    if (k.canvasId !== id) continue;
-    if (k.kind === "task") {
+  for (const k of store.descendants(id)) {
+    if (isTask(k)) {
       if (k.completedAt || rel.coveredBy(k)) { done++; continue; }
       open++;
-      const g = growthOf(k, t);
+      const g = growthOf(k, t, growthSettings);
       if (g.overdue) overdue++;
       maxScale = Math.max(maxScale, g.scale);
       maxUrgency = Math.max(maxUrgency, g.urgency);
-    } else if (k.kind === "canvas") {
-      open++;
     }
   }
   return { open, done, overdue, scale: Math.min(2.2, 1 + (maxScale - 1) * 0.6), hue: Math.round(50 - 50 * maxUrgency) };
 }
 
+function renderMiniature(el, id) {
+  const cards = store.board.tasks.filter((card) =>
+    (card.canvasId ?? null) === id && !(card.kind === "canvas" && card.workspace && !card.canvasId));
+  const workspace = getWorkspace(id);
+  const settingsForPreview = workspace && workspace.id !== getWorkspace()?.id
+    ? { ...GROWTH, ...settings.get(`canvas:${workspace.id}:growth`, {}) } : growthSettings;
+  const boxes = cards.map((card) => {
+    const g = isTask(card) ? growthOf(card, now(), settingsForPreview) : { scale: 1, hue: 50 };
+    const label = card.kind === "label";
+    const w = label ? Math.min(600, (card.title?.length || 1) * 15) : (card.w || 190) * g.scale;
+    const h = label ? (card.fontSize || 26) * 1.25 : (card.h || 72) * g.scale;
+    const colour = COLOR_BY_KEY[card.color];
+    return { card, left: card.x - w / 2, top: card.y - h / 2, w, h,
+      color: `hsl(${colour?.hue ?? g.hue} ${colour?.sat ?? 92}% 79%)` };
+  });
+  const signature = JSON.stringify(boxes.map(({ card, ...box }) => [card.title, card.kind, card.completedAt, box]));
+  if (el.dataset.signature === signature) return;
+  el.dataset.signature = signature;
+  el.setAttribute("aria-hidden", "true");
+  el.replaceChildren();
+  if (!boxes.length) {
+    const empty = document.createElement("span");
+    empty.className = "mini-empty";
+    empty.textContent = "Empty canvas";
+    el.append(empty);
+    return;
+  }
+  const left = Math.min(...boxes.map((b) => b.left));
+  const top = Math.min(...boxes.map((b) => b.top));
+  const width = Math.max(...boxes.map((b) => b.left + b.w)) - left;
+  const height = Math.max(...boxes.map((b) => b.top + b.h)) - top;
+  const scale = Math.min(162 / width, 77 / height, .5);
+  const stage = document.createElement("div");
+  stage.className = "mini-stage";
+  el.append(stage);
+  for (const box of boxes) {
+    const item = document.createElement("span");
+    item.className = `mini-card mini-${box.card.kind}`;
+    item.textContent = box.card.title || "";
+    item.style.left = `${(180 - width * scale) / 2 + (box.left - left) * scale}px`;
+    item.style.top = `${(95 - height * scale) / 2 + (box.top - top) * scale}px`;
+    item.style.width = `${Math.max(3, box.w * scale)}px`;
+    item.style.height = `${Math.max(3, box.h * scale)}px`;
+    item.style.setProperty("--mini-color", box.color);
+    stage.append(item);
+  }
+}
+
 function renderCard(task, el, i, t) {
   const editing = task.id === editingId;
-  el.style.left = `${task.x}px`;
-  el.style.top = `${task.y}px`;
+  if (drag?.el !== el || !drag.moved) {
+    el.style.left = `${task.x}px`;
+    el.style.top = `${task.y}px`;
+  }
   el.style.zIndex = String(i + 1);
   el.classList.toggle("selected", task.id === selectedId);
   const title = el.querySelector(".title");
 
   if (task.kind === "task") {
-    const covered = rel.coveredBy(task);
-    let g = growthOf(task, t);
+    if (drag?.kind !== "resize" || drag.id !== task.id) {
+      setNoteSize(el, task.w, task.h);
+      el.classList.toggle("sized", Number.isFinite(task.w) || Number.isFinite(task.h));
+    }
+  }
+  if (task.kind === "label") {
+    if (drag?.kind !== "resize" || drag.id !== task.id) {
+      el.style.setProperty("--label-size", `${task.fontSize || Math.round((task.h || 72) / 2.8)}px`);
+    }
+    if (!editing) {
+      setText(title, task.title || "Label");
+      title.classList.toggle("placeholder", !task.title);
+    }
+  } else if (task.kind === "task") {
+    const active = isTask(task);
+    el.classList.toggle("plain-note", !active);
+    const covered = active && rel.coveredBy(task);
+    let g = active ? growthOf(task, t, growthSettings) : { scale: 1, hue: 50, overdue: false };
     if (covered) g = { ...g, scale: 1, overdue: false };
     el.style.setProperty("--s", g.scale.toFixed(3));
     paint(el, task, g.hue);
-    el.classList.toggle("done", !!task.completedAt);
+    el.classList.toggle("done", active && !!task.completedAt);
     el.classList.toggle("covered", !!covered);
     el.classList.toggle("overdue", g.overdue);
     if (!editing) {
@@ -331,9 +517,10 @@ function renderCard(task, el, i, t) {
       title.classList.toggle("placeholder", !task.title);
       setText(el.querySelector(".notes"), task.notes);
     }
-    const meta = task.completedAt ? "Done" : covered ? `Covered by “${covered.title || "Untitled"}”` : dueText(task, t);
+    const meta = !active ? "" : task.completedAt ? "Done" : covered ? `Covered by “${covered.title || "Untitled"}”` : dueText(task, t);
     setText(el.querySelector(".meta"), meta);
     const check = el.querySelector(".check");
+    check.hidden = !active;
     setText(check, task.completedAt ? "✓" : "");
     check.title = task.completedAt ? "Mark not done" : "Mark complete";
 
@@ -348,6 +535,7 @@ function renderCard(task, el, i, t) {
     if (p) badge(badges, `✓ ${p.done}/${p.total} subtasks`, p.done === p.total ? "badge-complete" : "");
     if (task.source) badge(badges, task.source);
   } else if (task.kind === "canvas") {
+    renderMiniature(el.querySelector(".canvas-miniature"), task.id);
     const s = canvasStats(task.id, t);
     el.style.setProperty("--s", s.scale.toFixed(3));
     paint(el, task, s.hue);
@@ -387,8 +575,21 @@ function renderCard(task, el, i, t) {
 }
 
 function render() {
-  if (currentCanvas && store.get(currentCanvas)?.kind !== "canvas") currentCanvas = null; // deleted (e.g. by sync)
-  if (editingId && !store.get(editingId)) editingId = null;
+  document.body.classList.toggle("dashboard-active", dashboardOpen);
+  dashboard.hidden = !dashboardOpen;
+  canvas.hidden = dashboardOpen;
+  if (dashboardOpen) {
+    hint.hidden = true;
+    panel.hidden = true;
+    renderDashboard(app, dashboard);
+    return;
+  }
+  if (currentCanvas && store.get(currentCanvas)?.kind !== "canvas") {
+    openDashboard();
+    return;
+  }
+  if (selectedId && (!store.get(selectedId) || !isVisible(store.get(selectedId)))) selectedId = null;
+  if (editingId && (!store.get(editingId) || !isVisible(store.get(editingId)))) stopEdit({ silent: true });
   rel = links.computeRelations();
   const t = now();
   const seen = new Set();
@@ -396,21 +597,31 @@ function render() {
     if (!isVisible(task)) return;
     seen.add(task.id);
     let el = els.get(task.id);
-    if (el && el.dataset.kind !== task.kind) { el.remove(); el = null; }
+    if (el && el.dataset.kind !== task.kind) {
+      cardResize.unobserve(el);
+      el.remove();
+      el = null;
+    }
     if (!el) {
       el = createCardEl(task);
       els.set(task.id, el);
       world.appendChild(el);
+      cardResize.observe(el);
     }
     renderCard(task, el, i, t);
+    setCardDetail(el);
   });
   for (const [id, el] of els) {
-    if (!seen.has(id)) { el.remove(); els.delete(id); }
+    if (!seen.has(id)) {
+      cardResize.unobserve(el);
+      el.remove();
+      els.delete(id);
+    }
   }
-  hint.hidden = store.board.tasks.some((x) => (x.canvasId ?? null) === currentCanvas);
+  hint.hidden = store.board.tasks.some((x) => (x.canvasId ?? null) === currentCanvas && !x.workspace);
   hint.textContent = currentCanvas
-    ? "This canvas is empty. Double-click to add a task, or drag cards onto its card from the canvas above."
-    : "Double-click anywhere to add a task";
+    ? "This canvas is empty. Double-click to add a note, or drag cards onto its card from the canvas above."
+    : "Double-click anywhere to add a note";
   links.renderLinks();
   renderCrumbs();
   renderFilters();
@@ -450,7 +661,7 @@ function renderFilters() {
     b.querySelector(".count").textContent = String(counts.get(k));
     b.addEventListener("click", () => {
       if (hiddenColors.has(k)) hiddenColors.delete(k); else hiddenColors.add(k);
-      localStorage.setItem("hiddenColors", JSON.stringify([...hiddenColors]));
+      canvasSettings.set("hiddenColors", [...hiddenColors]);
       if (selectedId && hiddenColors.has(colorKey(store.get(selectedId) || {}))) selectedId = null;
       render();
     });
@@ -462,7 +673,7 @@ function renderFilters() {
     all.textContent = "Show all";
     all.addEventListener("click", () => {
       hiddenColors.clear();
-      localStorage.setItem("hiddenColors", "[]");
+      canvasSettings.set("hiddenColors", []);
       render();
     });
     filterBar.appendChild(all);
@@ -494,7 +705,7 @@ function select(id) {
 
 function removeIfEmpty(id) {
   const t = store.get(id);
-  if (t && t.kind === "task" && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due) {
+  if (t && (t.kind === "task" || t.kind === "label") && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due) {
     const linked = store.board.links.filter((l) => l.from === id || l.to === id).map((l) => l.id);
     store.removeMany({ taskIds: [id] });
     // Never synced, so no need for tombstones.
@@ -515,13 +726,17 @@ function updatePanel() {
   panel.hidden = !task;
   if (!task) { panelTaskId = null; return; }
   panel.dataset.kind = task.kind;
+  panel.dataset.taskMode = String(isTask(task));
+  taskMode.checked = isTask(task);
   // Refresh fields on a new selection, or when something else changed them (never while typing in them).
   const fresh = panelTaskId !== task.id;
+  if (fresh) webLinkInput.value = "";
+  if (task.kind === "task") renderNoteAttachments(task);
   if (fresh || (document.activeElement !== fTitle && fTitle.value !== task.title)) fTitle.value = task.title;
   if (fresh || (document.activeElement !== fNotes && fNotes.value !== task.notes)) fNotes.value = task.notes;
   panelTaskId = task.id;
   if (document.activeElement !== fDue) fDue.value = task.due || "";
-  fTitle.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "task" ? "What needs doing?" : "Name";
+  fTitle.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
 
   // Colour swatches
   const sig = `${task.id}:${colorKey(task)}`;
@@ -538,9 +753,9 @@ function updatePanel() {
     }
   }
 
-  const g = growthOf(task, now());
+  const g = growthOf(task, now(), growthSettings);
   const bits = [`Created ${relativeAge(task.createdAt)}`];
-  if (task.kind === "task") bits.push(task.completedAt ? `completed ${relativeAge(task.completedAt)}` : `size ${g.scale.toFixed(1)}×`);
+  if (isTask(task)) bits.push(task.completedAt ? `completed ${relativeAge(task.completedAt)}` : `size ${g.scale.toFixed(1)}×`);
   if (task.kind === "image" || task.kind === "file") bits.push(formatSize(task.size));
   if (task.source) bits.push(`imported from ${task.source}`);
   const r = rel.of(task.id);
@@ -551,6 +766,71 @@ function updatePanel() {
   setText(btnComplete, task.completedAt ? "Mark not done" : "Mark complete");
   setText(btnOpen, task.kind === "canvas" ? "Open canvas" : "Open file");
 }
+
+function renderNoteAttachments(note) {
+  const files = store.board.links.flatMap((link) => {
+    const otherId = link.from === note.id ? link.to : link.to === note.id ? link.from : null;
+    const other = otherId && store.get(otherId);
+    return other?.attachmentId ? [[link, other]] : [];
+  });
+  const urls = note.webLinks || [];
+  const signature = JSON.stringify([note.id, urls, files.map(([link, file]) => [link.id, file.title])]);
+  if (signature === noteAttachments.dataset.signature) return;
+  noteAttachments.dataset.signature = signature;
+  noteAttachments.replaceChildren();
+
+  function addRow(title, open, remove) {
+    const item = document.createElement("li");
+    const name = document.createElement("button");
+    name.className = "ghost attachment-name";
+    name.textContent = title;
+    name.title = title;
+    name.addEventListener("click", open);
+    const detach = document.createElement("button");
+    detach.className = "ghost small";
+    detach.textContent = "Remove";
+    detach.setAttribute("aria-label", `Remove ${title}`);
+    detach.addEventListener("click", remove);
+    item.append(name, detach);
+    noteAttachments.appendChild(item);
+  }
+
+  for (const url of urls) {
+    addRow(url, () => Promise.resolve(openUrl(url)).catch((error) => toast(String(error))), () => {
+      const current = store.get(note.id);
+      if (current) store.update(note.id, { webLinks: (current.webLinks || []).filter((link) => link !== url) });
+      render();
+    });
+  }
+  for (const [link, file] of files) {
+    addRow(file.title || "File", () => openElement(file.id), () => removeLink(link.id));
+  }
+}
+
+taskMode.addEventListener("change", () => {
+  if (store.get(selectedId)?.kind !== "task") return;
+  store.update(selectedId, { taskMode: taskMode.checked });
+  render();
+});
+$("#f-link-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const note = store.get(selectedId);
+  const url = webLink(webLinkInput.value);
+  if (note?.kind !== "task") return;
+  if (!url) return toast("Enter a valid HTTP or HTTPS link.");
+  store.update(note.id, { webLinks: [...new Set([...(note.webLinks || []), url])] });
+  webLinkInput.value = "";
+  render();
+});
+$("#btn-attach-file").addEventListener("click", async () => {
+  const note = store.get(selectedId);
+  if (note?.kind !== "task") return;
+  const position = spotBeside(note.id, "right");
+  const file = await pickFile();
+  if (file && store.get(note.id)) {
+    await addFilesAt([file], position, note.id, note.canvasId, { attachment: true });
+  }
+});
 
 fTitle.addEventListener("input", () => { store.update(selectedId, { title: fTitle.value }); render(); });
 fNotes.addEventListener("input", () => { store.update(selectedId, { notes: fNotes.value }); render(); });
@@ -594,7 +874,7 @@ function startEdit(id, field = "title") {
   titleEl.classList.remove("placeholder");
   titleEl.textContent = task.title;
   titleEl.contentEditable = EDIT_MODE;
-  titleEl.dataset.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "task" ? "What needs doing?" : "Name";
+  titleEl.dataset.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
   if (notesEl) {
     notesEl.textContent = task.notes;
     notesEl.contentEditable = EDIT_MODE;
@@ -658,13 +938,13 @@ function newId() {
   return crypto.randomUUID ? crypto.randomUUID() : `t-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function createTask({ title = "", notes = "", due = null, x, y, completedAt = null, kind = "task", color = null, ...extra } = {}) {
+function createTask({ title = "", notes = "", due = null, x, y, completedAt = null, kind = "task", color = null, canvasId = currentCanvas, ...extra } = {}) {
   if (x === undefined || y === undefined) ({ x, y } = viewCenterWorld());
   // Nudge so new cards don't land exactly on top of each other.
-  while (store.board.tasks.some((t) => (t.canvasId ?? null) === currentCanvas && Math.abs(t.x - x) < 20 && Math.abs(t.y - y) < 20)) { x += 30; y += 30; }
+  while (store.board.tasks.some((t) => (t.canvasId ?? null) === canvasId && Math.abs(t.x - x) < 20 && Math.abs(t.y - y) < 20)) { x += 30; y += 30; }
   const iso = new Date().toISOString();
   const task = {
-    ...extra, id: newId(), kind, title, notes, due, color, canvasId: currentCanvas,
+    ...extra, id: newId(), kind, title, notes, due, color, canvasId,
     x, y, createdAt: iso, updatedAt: iso, completedAt,
   };
   store.add(task);
@@ -703,7 +983,7 @@ function addTasks(list) {
 
 /** Create a task and start typing into it straight away. */
 function newTaskAt(x, y) {
-  const t = createTask({ x, y });
+  const t = createTask({ x, y, taskMode: canvasSettings.get("defaultTaskMode", false) });
   select(t.id);
   startEdit(t.id);
   return t;
@@ -711,7 +991,7 @@ function newTaskAt(x, y) {
 
 function toggleComplete(id) {
   const t = store.get(id);
-  if (!t || t.kind !== "task") return;
+  if (!isTask(t)) return;
   store.update(id, { completedAt: t.completedAt ? null : new Date().toISOString() });
   render();
 }
@@ -761,21 +1041,25 @@ function removeLink(linkId) {
   setUndo("Link removed", () => store.restoreMany(snap));
 }
 
-async function addFilesAt(files, pos, linkFrom = null) {
+async function addFilesAt(files, pos, linkFrom = null, destination = currentCanvas, { attachment = false } = {}) {
   let { x, y } = pos;
   let last = null;
   for (const f of files) {
     try {
       const fields = await storeFile(f);
-      const t = createTask({ ...fields, x, y, w: fields.kind === "image" ? 260 : undefined });
-      if (linkFrom) links.connect(linkFrom, t.id);
+      const source = linkFrom && store.get(linkFrom);
+      if (attachment && !source) return;
+      if (attachment) destination = source.canvasId;
+      const canvasId = store.get(destination)?.kind === "canvas" ? destination : null;
+      const t = createTask({ ...fields, x, y, canvasId, w: fields.kind === "image" ? 260 : undefined });
+      if (source && (source.canvasId ?? null) === canvasId) links.connect(source.id, t.id, attachment ? "attachment" : "related");
       last = t;
       x += 40; y += 40;
     } catch (e) {
       toast(String(e?.message || e), { ms: 9000 });
     }
   }
-  if (last) select(last.id); else render();
+  if (!attachment && last && last.canvasId === currentCanvas) select(last.id); else render();
 }
 
 // ---------- Toast & modal helpers (shared with feature modules) ----------
@@ -796,17 +1080,22 @@ function hideToast() { $("#toast").hidden = true; }
  * Open a modal dialog. `content` is an HTMLElement or an HTML string.
  * Returns { el, body, close }. Escape / backdrop click closes it.
  */
-function openModal(title, content, { onClose } = {}) {
+function openModal(title, content, { onClose, fullPage = false } = {}) {
   const backdrop = document.createElement("div");
-  backdrop.className = "modal-backdrop";
+  backdrop.className = fullPage ? "modal-backdrop settings-screen" : "modal-backdrop";
   backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><button class="ghost small modal-close">Close</button><h2></h2><div class="modal-body"></div></div>`;
-  backdrop.querySelector("h2").textContent = title;
+  const heading = backdrop.querySelector("h2");
+  heading.textContent = title;
+  heading.id = newId();
+  backdrop.querySelector(".modal").setAttribute("aria-labelledby", heading.id);
   const body = backdrop.querySelector(".modal-body");
   if (typeof content === "string") body.innerHTML = content;
   else if (content) body.appendChild(content);
+  const background = fullPage ? [dashboard, canvas, hint, toolbar, panel] : [];
   const close = () => {
     if (!backdrop.isConnected) return;
     backdrop.remove();
+    for (const element of background) element.inert = false;
     removeEventListener("keydown", onKey, true);
     onClose?.();
   };
@@ -815,6 +1104,8 @@ function openModal(title, content, { onClose } = {}) {
   backdrop.addEventListener("pointerdown", (e) => { if (e.target === backdrop) close(); });
   backdrop.querySelector(".modal-close").addEventListener("click", close);
   $("#modal-root").appendChild(backdrop);
+  for (const element of background) element.inert = true;
+  if (fullPage) backdrop.querySelector(".modal-close").focus();
   return { el: backdrop.querySelector(".modal"), body, close };
 }
 
@@ -824,10 +1115,11 @@ handle.id = "link-handle";
 handle.textContent = "+";
 handle.title = "Click for options · drag to link to another card";
 handle.hidden = true;
-world.appendChild(handle);
+canvas.appendChild(handle);
 let handleFor = null; // { id, side }
 
 function hideHandle() {
+  if (!handleFor) return;
   handle.hidden = true;
   handleFor = null;
 }
@@ -835,11 +1127,14 @@ function hideHandle() {
 const NEAR = 26; // screen px from a card edge where the "+" appears
 
 function updateHandle(sx, sy) {
-  if (handle.contains(document.elementFromPoint(sx, sy))) return; // keep it while hovering it
+  const hit = document.elementFromPoint(sx, sy);
+  if (handle.contains(hit)) return;
+  if (hit?.closest(".resize-grip")) return hideHandle();
   let best = null;
   for (const [id, el] of els) {
     const t = store.get(id);
     if (!t) continue;
+    if (el.classList.contains("distant")) continue;
     const c = toScreen(t.x, t.y);
     const hw = (el.offsetWidth / 2) * cam.z, hh = (el.offsetHeight / 2) * cam.z;
     const ax = Math.abs(sx - c.x), ay = Math.abs(sy - c.y);
@@ -856,10 +1151,15 @@ function updateHandle(sx, sy) {
   if (!best) return hideHandle();
   const t = store.get(best.id);
   const p = links.sidePoint(t, best.side, 16 / cam.z);
-  handle.style.left = `${p.x}px`;
-  handle.style.top = `${p.y}px`;
+  const screen = toScreen(p.x, p.y);
+  positionHandle(screen.x, screen.y);
   handle.hidden = false;
   handleFor = { id: best.id, side: best.side };
+}
+
+function positionHandle(x, y) {
+  const transform = `translate3d(${Math.round(x) - 13}px, ${Math.round(y) - 13}px, 0)`;
+  if (handle.style.transform !== transform) handle.style.transform = transform;
 }
 
 /** Where to put something new next to a card, on the given side. */
@@ -873,9 +1173,18 @@ function spotBeside(id, side) {
 
 /** The menu behind the "+": new linked task, image, file, sub-canvas. */
 function showPlusMenu(fromId, sx, sy, pos) {
+  const destination = currentCanvas;
   const linkTo = (t) => (fromId ? links.connect(fromId, t.id) : null);
+  const addText = (fields) => {
+    const t = createTask({ ...fields, x: pos.x, y: pos.y });
+    linkTo(t);
+    select(t.id);
+    startEdit(t.id);
+  };
   showMenu(sx, sy, [
     { header: fromId ? "Add and link" : "Add here" },
+    { label: "Note", icon: "✎", onClick: () => addText({ taskMode: false }) },
+    { label: "Label", icon: "T", hint: "Text directly on the canvas", onClick: () => addText({ kind: "label" }) },
     {
       label: "Task", icon: "✎", hint: fromId ? "A new card, linked to this one" : "A new card",
       onClick: () => {
@@ -890,11 +1199,11 @@ function showPlusMenu(fromId, sx, sy, pos) {
     },
     {
       label: "Image…", icon: "🖼", hint: "Pick a picture",
-      onClick: async () => { const f = await pickFile("image/*"); if (f) addFilesAt([f], pos, fromId); },
+      onClick: async () => { const f = await pickFile("image/*"); if (f) addFilesAt([f], pos, fromId, destination); },
     },
     {
       label: "File…", icon: "📎", hint: "Attach any file",
-      onClick: async () => { const f = await pickFile(""); if (f) addFilesAt([f], pos, fromId); },
+      onClick: async () => { const f = await pickFile(""); if (f) addFilesAt([f], pos, fromId, destination); },
     },
     {
       label: "Sub-canvas", icon: "▦", hint: "A canvas inside this one",
@@ -921,9 +1230,10 @@ canvas.addEventListener("contextmenu", (e) => {
   if (!t) return;
   select(t.id);
   const items = [];
-  if (t.kind === "task") {
+  if (t.kind === "task" || t.kind === "label") {
     items.push({ label: "Edit", icon: "✎", onClick: () => startEdit(t.id) });
-    items.push({ label: t.completedAt ? "Mark not done" : "Mark complete", icon: "✓", onClick: () => toggleComplete(t.id) });
+    if (t.kind === "task") items.push({ label: "Attach file…", icon: "+", onClick: () => $("#btn-attach-file").click() });
+    if (isTask(t)) items.push({ label: t.completedAt ? "Mark not done" : "Mark complete", icon: "✓", onClick: () => toggleComplete(t.id) });
   } else {
     items.push({ label: t.kind === "canvas" ? "Open" : "Open file", icon: "↗", onClick: () => openElement(t.id) });
     items.push({ label: "Rename", icon: "✎", onClick: () => startEdit(t.id) });
@@ -944,7 +1254,13 @@ canvas.addEventListener("contextmenu", (e) => {
 });
 
 // ---------- Pointer input: pan, drag cards, draw links ----------
+function setNoteSize(el, width, height) {
+  el.style.setProperty("--note-width", Number.isFinite(width) ? `${width}px` : "190px");
+  el.style.setProperty("--note-height", Number.isFinite(height) ? `${height}px` : "72px");
+}
+
 let drag = null;
+let suppressCanvasClick = false;
 
 /** The topmost card under a screen point, ignoring `excludeId`. */
 function cardAt(sx, sy, excludeId) {
@@ -961,6 +1277,12 @@ function setHighlight(cls, card) {
 }
 
 canvas.addEventListener("pointerdown", (e) => {
+  suppressCanvasClick = false;
+  if (e.button === 0 && e.target.closest(".card.distant")) {
+    drag = { kind: "inspect", sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
+    canvas.setPointerCapture(e.pointerId);
+    return;
+  }
   if (e.target.closest(".check, .link-chip, .link-hit")) return; // handled on click
   if (e.target.closest("[contenteditable]")) return; // placing the caret while editing
   if (e.target === handle && handleFor && e.button === 0) {
@@ -975,7 +1297,15 @@ canvas.addEventListener("pointerdown", (e) => {
     const t = store.get(cardEl.dataset.id);
     if (!t) return;
     select(t.id);
-    drag = { kind: "card", id: t.id, el: els.get(t.id), sx: e.clientX, sy: e.clientY, ox: t.x, oy: t.y, moved: false };
+    const el = els.get(t.id);
+    const resizing = e.target.closest(".resize-grip");
+    drag = { kind: resizing ? "resize" : "card", id: t.id, el,
+      sx: e.clientX, sy: e.clientY, ox: t.x, oy: t.y, moved: false };
+    if (resizing) {
+      const scale = Number(el.style.getPropertyValue("--s")) || 1;
+      Object.assign(drag, { scale, width: el.offsetWidth, height: el.offsetHeight,
+        fontSize: t.kind === "label" ? parseFloat(getComputedStyle(el).fontSize) : null });
+    }
   } else if (e.button === 0 || e.button === 1) {
     drag = { kind: "pan", sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
   } else return;
@@ -989,24 +1319,40 @@ canvas.addEventListener("pointermove", (e) => {
   if (!drag.moved) {
     drag.moved = true;
     if (drag.kind === "card") { drag.el.classList.add("dragging"); hideHandle(); }
+    else if (drag.kind === "resize") { drag.el.classList.add("resizing", "sized"); hideHandle(); }
     else if (drag.kind === "pan") { canvas.classList.add("panning"); hideHandle(); }
     else if (drag.kind === "link") { handle.classList.add("active"); }
   }
   if (drag.kind === "card") {
     const t = store.get(drag.id);
-    t.x = drag.ox + dx / cam.z;
-    t.y = drag.oy + dy / cam.z;
-    drag.el.style.left = `${t.x}px`;
-    drag.el.style.top = `${t.y}px`;
+    if (!t) return;
+    drag.x = drag.ox + dx / cam.z;
+    drag.y = drag.oy + dy / cam.z;
+    drag.el.style.left = `${drag.x}px`;
+    drag.el.style.top = `${drag.y}px`;
     links.renderLinks();
     const over = cardAt(e.clientX, e.clientY, drag.id);
     setHighlight("drop-target", over?.dataset.kind === "canvas" ? over : null);
+  } else if (drag.kind === "resize") {
+    const { el, scale, width, height, ox, oy } = drag;
+    if (drag.fontSize !== null) {
+      drag.newFontSize = Math.round(Math.max(12, Math.min(140, drag.fontSize + (dx + dy) / (3 * cam.z))));
+      el.style.setProperty("--label-size", `${drag.newFontSize}px`);
+    } else {
+      drag.w = Math.round(Math.max(140, Math.min(1000, (width + dx / cam.z) / scale)));
+      drag.h = Math.round(Math.max(72, Math.min(1000, (height + dy / cam.z) / scale)));
+      setNoteSize(el, drag.w, drag.h);
+    }
+    drag.x = ox + (el.offsetWidth - width) / 2;
+    drag.y = oy + (el.offsetHeight - height) / 2;
+    el.style.left = `${drag.x}px`;
+    el.style.top = `${drag.y}px`;
+    links.renderLinksSoon();
   } else if (drag.kind === "link") {
     const w = toWorld(e.clientX, e.clientY);
     links.drawTemp(drag.start, w);
     setHighlight("link-target", cardAt(e.clientX, e.clientY, drag.from));
-    handle.style.left = `${w.x}px`;
-    handle.style.top = `${w.y}px`;
+    positionHandle(e.clientX, e.clientY);
   } else {
     cam.x = drag.cx + dx;
     cam.y = drag.cy + dy;
@@ -1018,21 +1364,37 @@ function endDrag(e) {
   if (!drag) return;
   const d = drag;
   drag = null;
-  if (d.kind === "card") {
+  suppressCanvasClick = d.moved || d.kind === "link";
+  if (d.kind === "inspect" && !d.moved) {
+    suppressCanvasClick = true;
+    if (e.type === "pointerup") zoomAt(d.sx, d.sy, cam.z * 1.45);
+    return;
+  }
+  if (d.kind === "resize") {
+    d.el.classList.remove("resizing");
+    if (d.moved && e.type === "pointerup") {
+      const size = d.fontSize === null ? { w: d.w, h: d.h } : { fontSize: d.newFontSize };
+      store.update(d.id, { ...size, x: d.x, y: d.y });
+    }
+    render();
+  } else if (d.kind === "card") {
     d.el.classList.remove("dragging");
     setHighlight("drop-target", null);
     const t = store.get(d.id);
-    if (d.moved) {
-      const over = e && cardAt(e.clientX, e.clientY, d.id);
+    if (!t) return;
+    if (e.type === "pointercancel") {
+      render();
+    } else if (d.moved) {
+      const over = cardAt(e.clientX, e.clientY, d.id);
       if (over?.dataset.kind === "canvas" && over.dataset.id !== d.id) {
-        t.x = d.ox; t.y = d.oy; // so undo puts it back where it started
         moveToCanvas(d.id, over.dataset.id);
       } else {
-        store.update(d.id, {});
+        store.update(d.id, { x: d.x, y: d.y });
         render();
       }
     } else if (t?.kind === "canvas" && e?.type === "pointerup") {
-      enterCanvas(t.id); // a click on a sub-canvas opens it
+      suppressCanvasClick = true;
+      enterCanvas(t.id, d.el.querySelector(".canvas-miniature")); // a click on a sub-canvas opens it
     }
   } else if (d.kind === "link") {
     links.clearTemp();
@@ -1054,7 +1416,11 @@ function endDrag(e) {
     }
   } else {
     canvas.classList.remove("panning");
-    if (!d.moved) select(null);
+    if (e.type === "pointercancel") {
+      cam.x = d.cx;
+      cam.y = d.cy;
+      applyCamera();
+    } else if (!d.moved) select(null);
   }
 }
 canvas.addEventListener("pointerup", endDrag);
@@ -1062,21 +1428,23 @@ canvas.addEventListener("pointercancel", endDrag);
 canvas.addEventListener("pointerleave", () => { if (!drag) hideHandle(); });
 
 canvas.addEventListener("click", (e) => {
+  if (e.detail && suppressCanvasClick) return;
   const hit = e.detail ? document.elementFromPoint(e.clientX, e.clientY) : e.target;
   const check = hit?.closest(".check");
-  if (check) return toggleComplete(check.closest(".card").dataset.id);
+  if (check && e.target.closest(".check") === check) return toggleComplete(check.closest(".card").dataset.id);
   const linkEl = hit?.closest(".link-chip, .link-hit");
   if (linkEl) links.showLinkMenu(linkEl.dataset.link, e.clientX + 8, e.clientY + 8);
 });
 
 canvas.addEventListener("dblclick", (e) => {
+  if (suppressCanvasClick) return;
   const hit = document.elementFromPoint(e.clientX, e.clientY);
-  if (hit?.closest(".check, #link-handle, .link-chip, .link-hit, [contenteditable]")) return;
+  if (hit?.closest(".check, #link-handle, .link-chip, .link-hit, .resize-grip, [contenteditable]")) return;
   const cardEl = hit?.closest(".card");
   if (cardEl) {
     const t = store.get(cardEl.dataset.id);
     if (!t) return;
-    if (t.kind === "task") startEdit(t.id, hit.closest(".notes") ? "notes" : "title");
+    if (t.kind === "task" || t.kind === "label") startEdit(t.id, hit.closest(".notes") ? "notes" : "title");
     else if (t.kind === "image" || t.kind === "file") openElement(t.id);
     return;
   }
@@ -1084,22 +1452,20 @@ canvas.addEventListener("dblclick", (e) => {
   newTaskAt(w.x, w.y);
 });
 
-// Re-draw links once cards finish growing/shrinking.
-world.addEventListener("transitionend", (e) => {
-  if (e.target.classList?.contains("card")) links.renderLinksSoon();
-});
+// Keep link endpoints attached throughout a card resize, including image loads.
+const cardResize = new ResizeObserver(links.renderLinksSoon);
 
 // ---------- Files: drop onto the canvas, or paste ----------
 document.addEventListener("dragover", (e) => {
   if (e.dataTransfer?.types?.includes("Files")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }
 });
 document.addEventListener("drop", (e) => {
-  if (!e.dataTransfer?.files?.length) return;
+  if (dashboardOpen || !e.dataTransfer?.files?.length) return;
   e.preventDefault();
   addFilesAt([...e.dataTransfer.files], toWorld(e.clientX, e.clientY));
 });
 document.addEventListener("paste", (e) => {
-  if (isTyping(e.target)) return;
+  if (dashboardOpen || isTyping(e.target)) return;
   const files = [...(e.clipboardData?.files || [])];
   if (!files.length) return;
   e.preventDefault();
@@ -1145,7 +1511,9 @@ const keyHandlers = []; // feature hooks: (event) => true if handled
 
 addEventListener("keydown", (e) => {
   if (document.querySelector(".modal-backdrop") || isMenuOpen()) return;
+  if (e.target.closest?.("button") && (e.key === " " || e.key === "Enter")) return;
   for (const fn of keyHandlers) if (fn(e)) { e.preventDefault(); return; }
+  if (dashboardOpen) return;
   const mod = e.metaKey || e.ctrlKey;
   if (isTyping(e.target)) {
     if (e.key === "Escape") e.target.blur();
@@ -1175,7 +1543,8 @@ addEventListener("keydown", (e) => {
       break;
     case "Escape":
       if (selectedId) select(null);
-      else if (currentCanvas) enterCanvas(store.get(currentCanvas)?.canvasId ?? null); // up one level
+      else if (!currentCanvas || currentCanvas === getWorkspace()?.id) openDashboard();
+      else enterCanvas(store.get(currentCanvas)?.canvasId ?? null);
       break;
     case "f": case "F": fit(); break;
     case "0": zoomAt(innerWidth / 2, innerHeight / 2, 1); break;
@@ -1189,18 +1558,21 @@ $("#btn-new").addEventListener("click", () => {
   const c = viewCenterWorld();
   newTaskAt(c.x, c.y);
 });
+for (const [id, factor] of [["zoom-in", 1.2], ["zoom-out", 1 / 1.2]]) {
+  document.getElementById(id).addEventListener("click", () => {
+    const r = viewRect();
+    zoomAt((r.left + r.right) / 2, (r.top + r.bottom) / 2, cam.z * factor);
+  });
+}
 $("#btn-fit").addEventListener("click", fit);
+function setHideDone(hidden) {
+  hideDone = hidden;
+  chkHideDone.checked = hidden;
+  canvasSettings.set("hideDone", hidden);
+  render();
+}
 chkHideDone.checked = hideDone;
-chkHideDone.addEventListener("change", () => {
-  hideDone = chkHideDone.checked;
-  localStorage.setItem("hideDone", hideDone ? "1" : "0");
-  render();
-});
-timeTravel.addEventListener("input", () => {
-  timeOffsetDays = Number(timeTravel.value);
-  timeLabel.textContent = timeOffsetDays ? `+${timeOffsetDays} day${timeOffsetDays === 1 ? "" : "s"}` : "today";
-  render();
-});
+chkHideDone.addEventListener("change", () => setHideDone(chkHideDone.checked));
 
 // ---------- Feature module API ----------
 const settings = {
@@ -1210,6 +1582,45 @@ const settings = {
   },
   set(key, value) { localStorage.setItem(`setting:${key}`, JSON.stringify(value)); },
 };
+
+const canvasSettings = {
+  get(key, fallback) {
+    const workspace = getWorkspace();
+    return workspace ? settings.get(`canvas:${workspace.id}:${key}`, fallback) : settings.get(key, fallback);
+  },
+  set(key, value) {
+    const workspace = getWorkspace();
+    settings.set(workspace ? `canvas:${workspace.id}:${key}` : key, value);
+  },
+};
+
+let growthSettings = { ...GROWTH };
+function loadCanvasSettings() {
+  const legacy = !getWorkspace();
+  growthSettings = { ...GROWTH, ...canvasSettings.get("growth", {}) };
+  hideDone = canvasSettings.get("hideDone", legacy && localStorage.getItem("hideDone") === "1");
+  hiddenColors = new Set(canvasSettings.get("hiddenColors", legacy ? JSON.parse(localStorage.getItem("hiddenColors") || "[]") : []));
+  chkHideDone.checked = hideDone;
+  updateNewButton();
+}
+
+function setGrowth(options) {
+  growthSettings = { ...GROWTH, ...options };
+  canvasSettings.set("growth", options);
+  render();
+}
+
+function updateNewButton() {
+  const button = $("#btn-new");
+  const name = canvasSettings.get("defaultTaskMode", false) ? "task" : "note";
+  button.textContent = `+ New ${name}`;
+  button.title = `New ${name} (N)`;
+}
+
+function openUrl(url) {
+  if (invoke) return invoke("plugin:opener|open_url", { url });
+  return window.open(url, "_blank", "noopener");
+}
 
 // Secrets go to the OS keychain in the desktop app; localStorage in a plain browser (dev only).
 const secrets = {
@@ -1231,7 +1642,8 @@ const secrets = {
 function revealTask(id) {
   const t = store.get(id);
   if (!t) return;
-  if ((t.canvasId ?? null) !== currentCanvas) enterCanvas(t.canvasId ?? null);
+  if (t.kind === "canvas" && t.workspace) return enterCanvas(t.id);
+  if (dashboardOpen || (t.canvasId ?? null) !== currentCanvas) enterCanvas(t.canvasId ?? null);
   select(id);
   focusTask(id);
 }
@@ -1243,6 +1655,11 @@ export const app = {
   getSelectedId: () => selectedId,
   getCurrentCanvas: () => currentCanvas,
   enterCanvas,
+  getWorkspace,
+  isDashboard: () => dashboardOpen,
+  newWorkspace,
+  renderMiniature,
+  canvasSettings,
   revealTask,                // (id) open the right canvas, select and centre
   isVisible,
   focusTask,
@@ -1264,7 +1681,12 @@ export const app = {
   isDesktop: !!invoke,
   // fetch that bypasses browser CORS (Tauri http plugin), restricted to GitHub + Microsoft hosts.
   nativeFetch: tauri?.http?.fetch ?? window.fetch.bind(window),
-  openUrl: (url) => (tauri?.opener?.openUrl ? tauri.opener.openUrl(url) : window.open(url, "_blank")),
+  openUrl,
+  getGrowth: () => growthSettings,
+  setGrowth,
+  getHideDone: () => hideDone,
+  setHideDone,
+  updateNewButton,
   now,
   errorLog,                  // recent errors/warnings since startup
   loadedFeatures: [],        // names of feature modules that initialised
@@ -1280,11 +1702,7 @@ async function start() {
   if (status === "recovered") toast("Your board file was damaged, so the last backup was loaded.");
   if (status === "corrupt") toast("Your board file couldn't be read. Starting empty; the old file is kept in the data folder.", { ms: 15000 });
 
-  const saved = JSON.parse(localStorage.getItem("camera") || "null");
-  if (saved && Number.isFinite(saved.z)) Object.assign(cam, saved);
-  applyCamera();
-  render();
-  if (!saved && store.board.tasks.length) fit();
+  openDashboard();
 
   setInterval(render, 60 * 1000); // let cards keep growing while the app is open
 

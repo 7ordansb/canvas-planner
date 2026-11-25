@@ -171,7 +171,7 @@ async function syncOnce() {
       // Everything from here to setBoard is synchronous, so nothing can slip in between.
       const local = app.store.board;
       const localEmpty = !local.tasks.length && !(local.links || []).length && !Object.keys(local.deleted || {}).length;
-      const merged = localEmpty && remote.board ? remote.board : mergeBoards(local, remote.board);
+      const merged = localEmpty && remote.board ? remote.board : app.store.normalize(mergeBoards(local, remote.board));
       if (!sameBoard(merged, local)) {
         app.store.setBoard(merged, { silent: true });
         app.render();

@@ -32,9 +32,12 @@ function onKey(e) {
     closeMenu();
   } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
-    const items = [...open.el.querySelectorAll("button.menu-item:not(:disabled)")];
+    const items = [...open.el.querySelectorAll("button:not(:disabled)")];
+    if (!items.length) return;
     const i = items.indexOf(document.activeElement);
-    const next = e.key === "ArrowDown" ? (i + 1) % items.length : (i - 1 + items.length) % items.length;
+    const next = e.key === "ArrowDown"
+      ? (i + 1) % items.length
+      : (i < 0 ? items.length - 1 : (i - 1 + items.length) % items.length);
     items[next]?.focus();
   }
 }
@@ -61,6 +64,9 @@ export function showMenu(x, y, items, { onClose, className = "" } = {}) {
         const b = document.createElement("button");
         b.className = `swatch${s.checked ? " checked" : ""}`;
         b.title = s.label;
+        b.setAttribute("aria-label", s.label);
+        b.setAttribute("role", "menuitemradio");
+        b.setAttribute("aria-checked", String(s.checked));
         b.style.background = s.css;
         b.addEventListener("click", choose(() => it.onPick(s.key)));
         row.appendChild(b);

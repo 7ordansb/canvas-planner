@@ -2,7 +2,7 @@
 // Inside the desktop app it saves via Rust to a file in the app's data folder.
 // Opened in a plain browser (for development) it falls back to localStorage.
 
-import { KINDS, COLOR_BY_KEY, LINK_TYPES } from "./model.js";
+import { KINDS, COLOR_BY_KEY, LINK_TYPES, webLink } from "./model.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 
@@ -38,7 +38,29 @@ function normalize(data) {
       createdAt: t.createdAt || now,
       updatedAt: t.updatedAt || t.createdAt || now,
       completedAt: t.completedAt || null,
+      ...(Array.isArray(t.webLinks) ? { webLinks: [...new Set(t.webLinks.map(webLink).filter(Boolean))] } : {}),
     }));
+  const canvases = new Map(tasks.filter((t) => t.kind === "canvas").map((t) => [t.id, t]));
+  for (const task of tasks) {
+    if (!canvases.has(task.canvasId)) task.canvasId = null;
+  }
+  // Concurrent moves can form a cycle. Detach the same canvas on every device.
+  const checked = new Set();
+  for (const canvas of canvases.values()) {
+    const path = new Map();
+    let node = canvas;
+    while (node && !checked.has(node.id)) {
+      if (path.has(node.id)) {
+        const cycle = [...path.keys()].slice(path.get(node.id));
+        const root = cycle.map((id) => canvases.get(id)).reduce((a, b) => a.id < b.id ? a : b);
+        root.canvasId = null;
+        break;
+      }
+      path.set(node.id, path.size);
+      node = canvases.get(node.canvasId);
+    }
+    for (const id of path.keys()) checked.add(id);
+  }
   const ids = new Set(tasks.map((t) => t.id));
   const links = (Array.isArray(data?.links) ? data.links : [])
     .filter((l) => l && typeof l.id === "string" && ids.has(l.from) && ids.has(l.to) && l.from !== l.to)
@@ -137,16 +159,24 @@ export function updateLink(id, patch) {
 
 /** All elements inside a sub-canvas, at any depth. */
 export function descendants(canvasId) {
+  const children = new Map();
+  for (const task of board.tasks) {
+    if (!children.has(task.canvasId)) children.set(task.canvasId, []);
+    children.get(task.canvasId).push(task);
+  }
   const out = [];
-  const walk = (cid) => {
-    for (const t of board.tasks) {
-      if (t.canvasId === cid) {
-        out.push(t);
-        if (t.kind === "canvas") walk(t.id);
-      }
+  const seen = new Set([canvasId]);
+  const pending = (children.get(canvasId) || []).slice().reverse();
+  while (pending.length) {
+    const task = pending.pop();
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    out.push(task);
+    if (task.kind === "canvas") {
+      const nested = children.get(task.id) || [];
+      for (let i = nested.length - 1; i >= 0; i--) pending.push(nested[i]);
     }
-  };
-  walk(canvasId);
+  }
   return out;
 }
 

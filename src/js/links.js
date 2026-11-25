@@ -2,12 +2,13 @@
 // handle, the link-type picker, and what each link type means for the tasks.
 
 import * as store from "./store.js";
-import { LINK_TYPES } from "./model.js";
+import { LINK_TYPES, isTask } from "./model.js";
 import { showMenu } from "./menus.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 let core; // { els, isVisible, removeLink, render }
 let svg, linesGroup, tempPath, chips;
+const renderedLinks = new Map();
 
 export function initLinks(world, c) {
   core = c;
@@ -33,7 +34,12 @@ export function initLinks(world, c) {
 // ---------- Geometry ----------
 function boxOf(task) {
   const el = core.els.get(task.id);
-  return { x: task.x, y: task.y, hw: (el?.offsetWidth || 0) / 2, hh: (el?.offsetHeight || 0) / 2 };
+  return {
+    x: el ? parseFloat(el.style.left) : task.x,
+    y: el ? parseFloat(el.style.top) : task.y,
+    hw: (el?.offsetWidth || 0) / 2,
+    hh: (el?.offsetHeight || 0) / 2,
+  };
 }
 
 /** Where the line from a box's centre towards (tx, ty) leaves the box (plus a gap). */
@@ -62,8 +68,7 @@ export function sidePoint(task, side, out = 0) {
 // ---------- Drawing ----------
 export function renderLinks() {
   if (!svg) return;
-  linesGroup.textContent = "";
-  chips.textContent = "";
+  const visible = new Set();
   for (const l of store.board.links) {
     const a = store.get(l.from), b = store.get(l.to);
     if (!a || !b || !core.isVisible(a) || !core.isVisible(b)) continue;
@@ -73,26 +78,39 @@ export function renderLinks() {
     const p2 = edgePoint(B, A.x, A.y, def.directed ? 9 : 6);
     const d = `M${p1.x.toFixed(1)},${p1.y.toFixed(1)} L${p2.x.toFixed(1)},${p2.y.toFixed(1)}`;
 
-    const line = document.createElementNS(SVG, "path");
+    visible.add(l.id);
+    let nodes = renderedLinks.get(l.id);
+    if (!nodes) {
+      const line = document.createElementNS(SVG, "path");
+      const hit = document.createElementNS(SVG, "path");
+      hit.setAttribute("class", "link-hit");
+      hit.dataset.link = l.id;
+      const chip = document.createElement("button");
+      chip.dataset.link = l.id;
+      chip.title = "Change link type";
+      linesGroup.append(line, hit);
+      chips.appendChild(chip);
+      nodes = { line, hit, chip };
+      renderedLinks.set(l.id, nodes);
+    }
+    const { line, hit, chip } = nodes;
     line.setAttribute("class", `link link-${l.type}`);
     line.setAttribute("d", d);
     if (def.directed) line.setAttribute("marker-end", "url(#link-arrow)");
-    const hit = document.createElementNS(SVG, "path");
-    hit.setAttribute("class", "link-hit");
+    else line.removeAttribute("marker-end");
     hit.setAttribute("d", d);
-    hit.dataset.link = l.id;
-    linesGroup.append(line, hit);
-
-    if (def.chip) {
-      const chip = document.createElement("button");
-      chip.className = `link-chip chip-${l.type}`;
-      chip.dataset.link = l.id;
-      chip.textContent = def.chip;
-      chip.title = "Change link type";
-      chip.style.left = `${(p1.x + p2.x) / 2}px`;
-      chip.style.top = `${(p1.y + p2.y) / 2}px`;
-      chips.appendChild(chip);
-    }
+    chip.hidden = !def.chip;
+    chip.className = `link-chip chip-${l.type}`;
+    if (chip.textContent !== def.chip) chip.textContent = def.chip;
+    chip.style.left = `${(p1.x + p2.x) / 2}px`;
+    chip.style.top = `${(p1.y + p2.y) / 2}px`;
+  }
+  for (const [id, { line, hit, chip }] of renderedLinks) {
+    if (visible.has(id)) continue;
+    line.remove();
+    hit.remove();
+    chip.remove();
+    renderedLinks.delete(id);
   }
 }
 
@@ -139,6 +157,7 @@ export function showLinkMenu(linkId, sx, sy, { onClose } = {}) {
   const setType = (type) => () => { store.updateLink(linkId, { type }); core.render(); };
   showMenu(sx, sy, [
     { header: "What does this link mean?" },
+    ...(l.type === "attachment" ? [{ label: "Attachment", checked: true }] : []),
     { label: "Related", hint: "Just connected", checked: l.type === "related", onClick: setType("related") },
     { label: "Parent → subtask", hint: `${B} is a subtask of ${A}`, checked: l.type === "parent", onClick: setType("parent") },
     { label: "Dependency", hint: `${B} waits until ${A} is done`, checked: l.type === "blocks", onClick: setType("blocks") },
@@ -164,15 +183,16 @@ export function computeRelations() {
     if (!r) rel.set(id, (r = { children: [], parents: [], blockers: [], blocking: [], or: [] }));
     return r;
   };
+  const byId = new Map(store.board.tasks.map((t) => [t.id, t]));
   for (const l of store.board.links) {
+    if (!isTask(byId.get(l.from)) || !isTask(byId.get(l.to))) continue;
     if (l.type === "parent") { get(l.from).children.push(l.to); get(l.to).parents.push(l.from); }
     else if (l.type === "blocks") { get(l.to).blockers.push(l.from); get(l.from).blocking.push(l.to); }
     else if (l.type === "or") { get(l.from).or.push(l.to); get(l.to).or.push(l.from); }
   }
-  const byId = new Map(store.board.tasks.map((t) => [t.id, t]));
   const coveredBy = (t) => {
     if (t.completedAt) return null;
-    const partner = (rel.get(t.id)?.or || []).map((id) => byId.get(id)).find((p) => p?.completedAt);
+    const partner = (rel.get(t.id)?.or || []).map((id) => byId.get(id)).find((p) => isTask(p) && p.completedAt);
     return partner || null;
   };
   const isDone = (t) => !!t && (!!t.completedAt || !!coveredBy(t));

@@ -6,8 +6,8 @@
 export const DAY = 24 * 60 * 60 * 1000;
 
 export const GROWTH = {
-  agePerDay: 0.07,       // +7% size for each day the task exists...
-  ageMax: 0.8,           // ...up to +80% from age alone (about 11 days)
+  agePerDay: 0.15,       // +15% size for each day the task exists...
+  ageMax: 0.8,           // ...up to +80% from age alone (about 5 days)
   dueWindowDays: 7,      // start growing this many days before the due date
   dueMax: 1.0,           // +100% by the time the due date arrives
   overduePerDay: 0.2,    // keeps growing +20%/day once overdue...
@@ -37,13 +37,13 @@ export function daysUntilDue(isoDate, now) {
  *   urgency – 0..1, used for colour
  *   hue     – card colour hue: 50 (calm yellow) → 0 (red)
  */
-export function growthOf(task, now) {
+export function growthOf(task, now, options = GROWTH) {
   if (task.completedAt) {
-    return { scale: GROWTH.doneScale, urgency: 0, hue: 50, overdue: false };
+    return { scale: options.doneScale, urgency: 0, hue: 50, overdue: false };
   }
 
   const ageDays = Math.max(0, (now - Date.parse(task.createdAt)) / DAY);
-  const age = Math.min(GROWTH.ageMax, ageDays * GROWTH.agePerDay);
+  const age = Math.min(options.ageMax, ageDays * options.agePerDay);
 
   let due = 0;
   let overdue = false;
@@ -51,13 +51,13 @@ export function growthOf(task, now) {
     const daysLeft = (endOfDay(task.due) - now) / DAY;
     if (daysLeft <= 0) {
       overdue = true;
-      due = GROWTH.dueMax + Math.min(GROWTH.overdueMax, -daysLeft * GROWTH.overduePerDay);
-    } else if (daysLeft < GROWTH.dueWindowDays) {
-      due = GROWTH.dueMax * (1 - daysLeft / GROWTH.dueWindowDays);
+      due = options.dueMax + Math.min(options.overdueMax, -daysLeft * options.overduePerDay);
+    } else if (daysLeft < options.dueWindowDays) {
+      due = options.dueMax * (1 - daysLeft / options.dueWindowDays);
     }
   }
 
-  const scale = Math.min(GROWTH.maxScale, 1 + age + due);
-  const urgency = Math.min(1, (scale - 1) / (GROWTH.maxScale - 1.4));
+  const scale = Math.min(options.maxScale, 1 + age + due);
+  const urgency = Math.min(1, (scale - 1) / (options.maxScale - 1.4));
   return { scale, urgency, hue: Math.round(50 - 50 * urgency), overdue };
 }

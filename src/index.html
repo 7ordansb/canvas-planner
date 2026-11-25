@@ -3,32 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="js/theme.js"></script>
   <title>Canvas Planner</title>
   <link rel="stylesheet" href="style.css" />
   <!-- Feature styles (each feature module owns its own file) -->
   <link rel="stylesheet" href="css/sync.css" />
   <link rel="stylesheet" href="css/importer.css" />
   <link rel="stylesheet" href="css/extras.css" />
+  <link rel="stylesheet" href="pinboard.css" />
 </head>
 <body>
+  <main id="dashboard" aria-label="Dashboard" tabindex="-1" hidden></main>
   <div id="canvas"><div id="world"></div></div>
-  <div id="hint">Double-click anywhere to add a task</div>
+  <div id="hint">Double-click anywhere to add a note</div>
 
   <header id="toolbar">
-    <nav id="crumbs" hidden></nav>
-    <button id="btn-new" title="New task (N)">+ New task</button>
-    <button id="btn-fit" title="Zoom to fit (F)">Fit</button>
-    <span id="zoom-label" title="Zoom">100%</span>
+    <nav id="crumbs" aria-label="Canvas path"></nav>
+    <button id="btn-new" title="New note (N)">+ New note</button>
     <label class="toggle"><input type="checkbox" id="chk-hide-done" /> Hide done</label>
-    <label class="timetravel" title="Preview how cards will grow over the coming days">
-      <span>Preview</span>
-      <input type="range" id="time-travel" min="0" max="30" value="0" />
-      <span id="time-label">today</span>
-    </label>
     <div id="filter-bar" hidden></div>
     <!-- Feature modules add their own buttons here -->
     <div id="toolbar-slot"></div>
   </header>
+
+  <nav id="zoom-controls" aria-label="Canvas zoom">
+    <button id="zoom-out" aria-label="Zoom out">−</button><span id="zoom-label">100%</span>
+    <button id="zoom-in" aria-label="Zoom in">+</button><button id="btn-fit">Fit</button>
+  </nav>
 
   <aside id="panel" hidden>
     <textarea id="f-title" rows="2" placeholder="What needs doing?"></textarea>
@@ -36,6 +37,7 @@
       <span>Colour</span>
       <div id="f-colors" class="swatches"></div>
     </div>
+    <label class="field note-only"><span><input id="f-task-mode" type="checkbox" /> Task mode</span></label>
     <div class="field task-only">
       <span>Due date</span>
       <div class="row">
@@ -43,10 +45,19 @@
         <button id="btn-clear-due" class="ghost small">Clear</button>
       </div>
     </div>
-    <label class="field task-only">
+    <label class="field note-only">
       <span>Notes</span>
       <textarea id="f-notes" rows="7" placeholder="Details, links, sub-steps…"></textarea>
     </label>
+    <section class="field note-only" aria-label="Note attachments">
+      <span>Links and files</span>
+      <form id="f-link-form" class="row">
+        <input id="f-link-url" type="text" inputmode="url" placeholder="Paste a web link" aria-label="Web link" required />
+        <button type="submit" class="small">Add link</button>
+      </form>
+      <button id="btn-attach-file" class="small" type="button">Attach a file…</button>
+      <ul id="f-attachments"></ul>
+    </section>
     <p id="f-info"></p>
     <div class="row">
       <button id="btn-complete" class="task-only">Mark complete</button>

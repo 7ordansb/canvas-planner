@@ -56,6 +56,23 @@ jobs:
           mkdir -p dist
           cp src-tauri/target/release/canvas-planner.exe dist/CanvasPlanner.exe
 
+      - name: Verify Windows app opens
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $planner = Start-Process dist/CanvasPlanner.exe -PassThru
+          try {
+            for ($i = 0; $i -lt 60; $i++) {
+              $planner.Refresh()
+              if ($planner.HasExited) { throw "Canvas Planner exited during startup" }
+              if ($planner.MainWindowHandle -ne 0) { break }
+              Start-Sleep -Seconds 1
+            }
+            if ($planner.MainWindowHandle -eq 0) { throw "Canvas Planner window did not open" }
+          } finally {
+            if (!$planner.HasExited) { $planner.Kill() }
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: CanvasPlanner-${{ matrix.name }}
