@@ -5,9 +5,9 @@ A task tracker that is a big canvas. Every task is a card you can drag anywhere.
 It runs on Windows and macOS **without installing anything**.
 
 ## Get it
-1. Go to the repo's **Releases** page, or the **Actions** tab → the latest green run → **Artifacts**.
+1. Go to the [latest GitHub release](https://github.com/7ordansb/canvas-planner/releases/latest).
 2. Download your version:
-   - **Windows:** `CanvasPlanner.exe`. Put it anywhere (e.g. Documents) and double-click it. If Windows says "protected your PC", click **More info → Run anyway**.
+   - **Windows (64-bit):** Download `CanvasPlanner.exe` and double-click it to launch. The app uses the Microsoft Edge WebView2 runtime included with Windows 11 and most Windows 10 PCs. [WebView2 runtime details](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/evergreen-vs-fixed-version)
    - **Mac:** `CanvasPlanner-mac.zip`. Unzip it and open **Canvas Planner.app**. The first time, approve it in **System Settings → Privacy & Security → Open Anyway**.
 3. To update, download the new version and replace the old file. Your tasks are stored separately, so they stay.
 
