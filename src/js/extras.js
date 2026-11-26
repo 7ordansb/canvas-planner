@@ -87,6 +87,37 @@ function formatDue(iso) {
   return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
 
+function settingsSection(id, title, description) {
+  return el("section", { id, class: "settings-panel", "aria-labelledby": `${id}-heading` }, [
+    el("h3", { id: `${id}-heading`, class: "settings-panel-title", tabindex: "-1", text: title }),
+    description && el("p", { class: "settings-description", text: description }),
+  ]);
+}
+
+function settingsField(label, control) {
+  return el("label", { class: "settings-field" }, [el("span", { text: label }), control]);
+}
+
+function showUpdateConfirmation(version) {
+  const dialog = el("dialog", {
+    class: "modal update-dialog",
+    "aria-labelledby": "update-dialog-title",
+    "aria-describedby": "update-dialog-message",
+  }, [
+    el("span", { class: "update-dialog-check", "aria-hidden": "true", text: "✓" }),
+    el("h2", { id: "update-dialog-title", text: "Update complete" }),
+    el("p", { id: "update-dialog-message" }, [
+      "Canvas Planner is now running version ", el("strong", { text: version }), ".",
+    ]),
+    el("form", { method: "dialog", class: "update-dialog-actions" }, [
+      el("button", { class: "primary", autofocus: "", text: "OK" }),
+    ]),
+  ]);
+  dialog.addEventListener("close", () => dialog.remove(), { once: true });
+  document.getElementById("modal-root").append(dialog);
+  dialog.showModal();
+}
+
 // ---------- Init ----------
 export async function init(app) {
   if (!Array.isArray(app.errorLog)) installErrorCapture(); // core captures from startup when available
@@ -363,43 +394,86 @@ export async function init(app) {
     return lines.join("\n");
   }
 
-  const updateSection = el("section", { class: "extras-update" });
+  const updateSection = settingsSection("settings-updates", "App updates");
   if (app.isDesktop) {
-    const updateButton = el("button", { class: "small", text: "Update from GitHub" });
-    const updateStatus = el("p", { class: "hint", role: "status" });
+    updateSection.classList.add("settings-update-card");
+    const updateButton = el("button", { class: "settings-update-button", type: "button", text: "Update from GitHub" });
+    const updateStatus = el("p", { class: "settings-update-status", role: "status" });
+    const currentVersion = el("span", { class: "settings-version" });
+    appVersion().then((version) => { currentVersion.textContent = `Installed version ${version}`; });
+    const showStatus = (state, message) => {
+      updateSection.dataset.updateState = state;
+      updateStatus.textContent = message;
+    };
     updateButton.addEventListener("click", async () => {
       updateButton.disabled = true;
-      updateStatus.textContent = "Checking GitHub and downloading any available update…";
+      updateButton.textContent = "Checking for updates…";
+      showStatus("busy", "Checking GitHub and downloading any available update…");
       try {
         const version = await app.invoke("prepare_update");
         if (!version) {
-          updateStatus.textContent = "You’re using the latest version.";
+          showStatus("ready", "You’re using the latest version.");
+        } else {
+          updateButton.textContent = "Restarting…";
+          showStatus("busy", `Restarting to apply version ${version}…`);
+          await store.flushForRestart();
+          await app.invoke("apply_update");
           return;
         }
-        updateStatus.textContent = `Restarting to apply version ${version}…`;
-        await store.flushForRestart();
-        await app.invoke("apply_update");
       } catch (error) {
-        updateStatus.textContent = `Couldn't update. ${error.message || error}`;
-      } finally {
-        updateButton.disabled = false;
+        showStatus("error", `Couldn't update. ${error.message || error}`);
       }
+      updateButton.disabled = false;
+      updateButton.textContent = "Update from GitHub";
     });
-    updateSection.append(el("h3", { class: "extras-h3", text: "App updates" }), updateButton, updateStatus);
-    app.invoke("update_result").then((message) => {
-      if (message) {
-        updateStatus.textContent = message;
-        app.toast(message, { ms: 10000 });
+    const title = updateSection.firstElementChild;
+    updateSection.append(
+      el("div", { class: "settings-update-copy" }, [
+        currentVersion,
+        title,
+        el("p", { class: "settings-description", text: "Download the latest release and restart Canvas Planner in one step." }),
+      ]),
+      updateButton,
+      updateStatus,
+    );
+    app.invoke("update_result").then((result) => {
+      if (result?.status === "installed") {
+        showStatus("ready", `Updated to version ${result.version}.`);
+        showUpdateConfirmation(result.version);
+      } else if (result?.status === "failed") {
+        showStatus("error", result.message);
+        app.toast(result.message, { ms: 10000 });
       }
     }).catch((error) => console.warn("Could not read update result", error));
   }
 
-  async function openSettings() {
-    const body = el("div", { class: "extras-settings" });
-    const versionEl = el("span", { text: "…" });
+  function openSettings() {
+    const content = el("div", { class: "settings-content" });
+    const nav = el("nav", { class: "settings-nav", "aria-label": "Settings sections" });
+    const body = el("div", { class: "settings-layout" }, [nav, content]);
     const folderEl = el("code", { class: "extras-path", text: "…" });
     const copyFolderBtn = el("button", { class: "ghost small", text: "Copy", disabled: "" });
     const c = taskCounts();
+    const workspace = app.getWorkspace();
+    const entireBoard = app.isDashboard();
+
+    function addSection(section) {
+      const heading = section.querySelector("h3");
+      const jump = el("button", { type: "button", text: heading.textContent });
+      jump.setAttribute("aria-controls", section.id);
+      jump.addEventListener("click", () => {
+        section.scrollIntoView({ block: "start" });
+        heading.focus({ preventScroll: true });
+      });
+      nav.append(jump);
+      content.append(section);
+    }
+    if (app.isDesktop) addSection(updateSection);
+
+    const appearance = settingsSection("settings-appearance", "Appearance", "Choose the colour theme for this device.");
+    const canvasPreferences = settingsSection("settings-canvas", "Canvas", entireBoard
+      ? "Defaults for new canvases and the original canvas on this device."
+      : "Preferences for this canvas and its sub-canvases on this device.");
 
     const defaultTask = el("input", { type: "checkbox" });
     defaultTask.checked = app.canvasSettings.get("defaultTaskMode", false);
@@ -423,9 +497,8 @@ export async function init(app) {
       localStorage.setItem("pinboard-theme", theme.value);
       document.documentElement.dataset.theme = theme.value;
     };
-    body.append(el("h3", {class: "extras-h3", text: "Appearance"}), el("label", {}, ["Colour theme", theme]));
-    const workspace = app.getWorkspace();
-    body.append(el("h3", { class: "extras-h3", text: "Canvas" }));
+    appearance.append(settingsField("Colour theme", theme));
+    addSection(appearance);
     if (workspace) {
       const name = el("input", { type: "text", maxlength: "100" });
       name.value = workspace.title;
@@ -434,16 +507,16 @@ export async function init(app) {
         store.update(workspace.id, { title: name.value });
         app.render();
       });
-      body.append(el("label", {}, [el("span", { text: "Canvas name" }), name]));
+      canvasPreferences.append(settingsField("Canvas name", name));
     }
-    body.append(
-      el("label", { class: "settings-toggle" }, [defaultTask, document.createTextNode("Start new notes in task mode")]),
-      el("label", {}, ["Default note style", defaultStyle]),
-      el("label", { class: "settings-toggle" }, [hideDone, document.createTextNode("Hide completed tasks")]),
-      el("h3", { class: "extras-h3", text: "Task growth" }),
-      el("p", { class: "hint", text: app.isDashboard() ? "Defaults for new canvases on this device. These also apply to the original canvas." : "These settings apply on this device to this canvas and its sub-canvases." }),
+    canvasPreferences.append(
+      settingsField("Default note style", defaultStyle),
+      settingsField("Start new notes in task mode", defaultTask),
+      settingsField("Hide completed tasks", hideDone),
     );
+    addSection(canvasPreferences);
 
+    const growth = settingsSection("settings-task-growth", "Task growth", "Adjust how quickly tasks grow with age and approaching due dates.");
     const growthFields = [
       ["agePerDay", "Size increase per day (%)", 100, 100],
       ["ageMax", "Maximum increase from age (%)", 100, 260],
@@ -471,35 +544,37 @@ export async function init(app) {
       app.setGrowth({});
       refreshGrowth.forEach((refresh) => refresh());
     });
-    body.append(fields, resetGrowth, el("h3", { class: "extras-h3", text: "About" }),
+    growth.append(fields, resetGrowth);
+    addSection(growth);
+
+    const data = settingsSection("settings-data", "Data & support", "Copy your board as JSON or collect diagnostics for troubleshooting.");
+    data.append(
       el("dl", { class: "extras-about" }, [
-        el("dt", { text: "Version" }), el("dd", {}, versionEl),
         el("dt", { text: "Data folder" }), el("dd", { class: "extras-folder" }, [folderEl, copyFolderBtn]),
         el("dt", { text: "Tasks" }), el("dd", { text: `${c.open} open · ${c.done} done · ${c.overdue} overdue` }),
       ]),
     );
-    if (app.isDesktop) body.append(updateSection);
-
-    // Diagnostics + backup
     const diagBtn = el("button", { class: "small", text: "Copy diagnostics" });
     const jsonBtn = el("button", { class: "small", text: "Copy board as JSON" });
-    body.append(
-      el("h3", { class: "extras-h3", text: "Support & backup" }),
-      el("div", { class: "extras-row" }, [diagBtn, jsonBtn]),
-      el("p", { class: "hint", text: "Diagnostics include version, system info, task counts and recent errors. No task text or tokens." }),
+    data.append(
+      el("div", { class: "extras-row" }, [jsonBtn, diagBtn]),
+      el("p", { class: "settings-description", text: "Diagnostics include version, system info, task counts and recent errors." }),
     );
+    addSection(data);
 
     // Clear completed (two-step confirm)
-    const entireBoard = app.isDashboard();
     const completedTasks = () => store.board.tasks.filter((task) =>
       isTask(task) && task.completedAt && (entireBoard || app.getWorkspace(task.canvasId)?.id === workspace?.id));
     const clearBtn = el("button", { class: "danger small", text: "Clear completed tasks…" });
     const confirmRow = el("div", { class: "extras-confirm", hidden: "" });
-    body.append(el("h3", { class: "extras-h3", text: "Clean up" }), el("div", { class: "extras-row" }, [clearBtn]), confirmRow);
+    const cleanup = settingsSection("settings-cleanup", "Clean up", entireBoard
+      ? "Remove completed tasks from all canvases."
+      : "Remove completed tasks from this canvas and its sub-canvases.");
+    cleanup.append(clearBtn, confirmRow);
+    addSection(cleanup);
 
     const modal = app.openModal(workspace ? `Settings · ${workspace.title}` : "Settings", body, { fullPage: true, onClose: () => gearBtn.focus() });
 
-    appVersion().then((v) => { versionEl.textContent = v; });
     dataFolder().then((p) => {
       folderEl.textContent = p;
       if (app.invoke && !p.startsWith("error:")) copyFolderBtn.disabled = false;

@@ -1,5 +1,5 @@
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
     ffi::{OsStr, OsString},
@@ -7,6 +7,7 @@ use std::{
     io::Write,
     path::{Component, Path, PathBuf},
     process::{ChildStdin, Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 use tauri::async_runtime::Mutex;
@@ -33,7 +34,10 @@ const ASSET: &str = "";
 const REPLACEMENT: &str = "";
 
 #[derive(Default)]
-pub struct State(Mutex<Update>);
+pub struct State {
+    update: Mutex<Update>,
+    result_consumed: AtomicBool,
+}
 
 #[derive(Default)]
 struct Update {
@@ -97,7 +101,7 @@ pub async fn prepare_update(
         return Err("In-app updates support Windows and macOS.".into());
     }
     let mut update = state
-        .0
+        .update
         .try_lock()
         .map_err(|_| "An update is already running.")?;
     if update.shutdown.is_some() {
@@ -232,7 +236,7 @@ pub async fn apply_update(
     state: tauri::State<'_, State>,
 ) -> Result<(), String> {
     let mut update = state
-        .0
+        .update
         .try_lock()
         .map_err(|_| "An update is already running.")?;
     let (stage, path) = update.prepared.take().ok_or("Check for an update first.")?;
@@ -374,8 +378,18 @@ fn launch(destination: &Path, stage_name: &OsStr) -> Result<(), String> {
         .map_err(error)
 }
 
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum UpdateResult {
+    Installed { version: String },
+    Failed { message: String },
+}
+
 #[tauri::command]
-pub fn update_result() -> Option<String> {
+pub fn update_result(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, State>,
+) -> Option<UpdateResult> {
     let mut args = std::env::args_os().skip(1);
     if args.next().as_deref() != Some(OsStr::new(CLEANUP_ARG)) {
         return None;
@@ -384,7 +398,18 @@ pub fn update_result() -> Option<String> {
         .next()
         .filter(|name| is_file_name(name) && name.to_string_lossy().starts_with(STAGE_PREFIX))?;
     let stage = app_path().ok()?.parent()?.join(stage_name);
-    let message = fs::read_to_string(stage.join("error.txt")).ok();
+    if !stage.is_dir() || state.result_consumed.swap(true, Ordering::Relaxed) {
+        return None;
+    }
+    let result = match fs::read_to_string(stage.join("error.txt")) {
+        Ok(message) => UpdateResult::Failed { message },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => UpdateResult::Installed {
+            version: app.package_info().version.to_string(),
+        },
+        Err(e) => UpdateResult::Failed {
+            message: format!("Couldn't read the update result. {e}"),
+        },
+    };
     // On Windows the helper itself may still be locked until it exits.
     std::thread::spawn(move || {
         for _ in 0..20 {
@@ -394,5 +419,5 @@ pub fn update_result() -> Option<String> {
             std::thread::sleep(Duration::from_millis(200));
         }
     });
-    Some(message.unwrap_or_else(|| "Canvas Planner updated.".into()))
+    Some(result)
 }

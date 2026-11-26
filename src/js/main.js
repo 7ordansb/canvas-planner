@@ -1209,13 +1209,21 @@ function openModal(title, content, { onClose, fullPage = false } = {}) {
   backdrop.className = fullPage ? "modal-backdrop settings-screen" : "modal-backdrop";
   backdrop.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><button class="ghost small modal-close">Close</button><h2></h2><div class="modal-body"></div></div>`;
   const heading = backdrop.querySelector("h2");
+  const closeButton = backdrop.querySelector(".modal-close");
+  const dialog = backdrop.querySelector(".modal");
   heading.textContent = title;
   heading.id = newId();
-  backdrop.querySelector(".modal").setAttribute("aria-labelledby", heading.id);
+  dialog.setAttribute("aria-labelledby", heading.id);
+  if (fullPage) {
+    const header = document.createElement("header");
+    header.className = "settings-header";
+    header.append(heading, closeButton);
+    dialog.prepend(header);
+  }
   const body = backdrop.querySelector(".modal-body");
   if (typeof content === "string") body.innerHTML = content;
   else if (content) body.appendChild(content);
-  const background = fullPage ? [dashboard, canvas, hint, toolbar, panel] : [];
+  const background = fullPage ? [dashboard, canvas, hint, toolbar, panel, $("#zoom-controls")] : [];
   const close = () => {
     if (!backdrop.isConnected) return;
     backdrop.remove();
@@ -1223,14 +1231,19 @@ function openModal(title, content, { onClose, fullPage = false } = {}) {
     removeEventListener("keydown", onKey, true);
     onClose?.();
   };
-  const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  const onKey = (e) => {
+    if (e.key === "Escape" && !document.querySelector("dialog[open]")) {
+      e.stopPropagation();
+      close();
+    }
+  };
   addEventListener("keydown", onKey, true);
   backdrop.addEventListener("pointerdown", (e) => { if (e.target === backdrop) close(); });
-  backdrop.querySelector(".modal-close").addEventListener("click", close);
+  closeButton.addEventListener("click", close);
   $("#modal-root").appendChild(backdrop);
   for (const element of background) element.inert = true;
-  if (fullPage) backdrop.querySelector(".modal-close").focus();
-  return { el: backdrop.querySelector(".modal"), body, close };
+  if (fullPage) closeButton.focus();
+  return { el: dialog, body, close };
 }
 
 // ---------- The "+" handle on card edges ----------
@@ -1685,7 +1698,7 @@ document.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }
 const keyHandlers = []; // feature hooks: (event) => true if handled
 
 addEventListener("keydown", (e) => {
-  if (document.querySelector(".modal-backdrop") || isMenuOpen()) return;
+  if (document.querySelector(".modal-backdrop, dialog[open]") || isMenuOpen()) return;
   if (e.target.closest?.("button") && (e.key === " " || e.key === "Enter")) return;
   for (const fn of keyHandlers) if (fn(e)) { e.preventDefault(); return; }
   if (dashboardOpen) return;
