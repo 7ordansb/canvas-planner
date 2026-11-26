@@ -44,8 +44,11 @@ jobs:
         if: matrix.name == 'mac'
         run: |
           npx tauri build --target universal-apple-darwin --bundles app
+          bundle="src-tauri/target/universal-apple-darwin/release/bundle/macos/Canvas Planner.app"
+          codesign --force --sign - "$bundle"
+          codesign --verify --strict "$bundle"
           mkdir -p dist
-          ditto -c -k --keepParent "src-tauri/target/universal-apple-darwin/release/bundle/macos/Canvas Planner.app" dist/CanvasPlanner-mac.zip
+          ditto -c -k --keepParent "$bundle" dist/CanvasPlanner-mac.zip
 
       # Windows: a single portable .exe, no installer.
       - name: Build Windows exe
@@ -73,15 +76,65 @@ jobs:
             if (!$planner.HasExited) { $planner.Kill() }
           }
 
+      - name: Verify Windows portable update and restart
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "Canvas Planner update test"
+          $stage = Join-Path $root ".canvas-planner-update-smoke"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          $destination = Join-Path $root "My Canvas.exe"
+          $replacement = Join-Path $stage "CanvasPlanner.exe"
+          $helper = Join-Path $stage "update-helper.exe"
+          Copy-Item dist/CanvasPlanner.exe $destination
+          Copy-Item $destination $replacement
+          # Make the old executable distinguishable without changing how it launches.
+          Add-Content $destination "old test copy" -NoNewline
+          Copy-Item $destination $helper
+          $expected = (Get-FileHash $replacement).Hash
+          $original = Start-Process $destination -PassThru
+          try {
+            $info = [System.Diagnostics.ProcessStartInfo]::new($helper)
+            $info.ArgumentList.Add("--apply-prepared-update")
+            $info.ArgumentList.Add("My Canvas.exe")
+            $info.ArgumentList.Add((Join-Path $root "app-update.lock"))
+            $info.UseShellExecute = $false
+            $info.RedirectStandardInput = $true
+            $worker = [System.Diagnostics.Process]::Start($info)
+            Start-Sleep -Seconds 2
+            if ((Get-FileHash $destination).Hash -eq $expected) { throw "The update replaced the app before shutdown" }
+            $original.Kill()
+            $original.WaitForExit()
+            $worker.StandardInput.Close()
+            if (!$worker.WaitForExit(30000) -or $worker.ExitCode -ne 0) { throw "Portable update helper failed" }
+            if ((Get-FileHash $destination).Hash -ne $expected) { throw "The portable executable was not replaced" }
+            for ($i = 0; $i -lt 30 -and (Test-Path $stage); $i++) { Start-Sleep -Seconds 1 }
+            if (Test-Path $stage) { throw "The updated app didn't reopen and clean up after the update" }
+          } finally {
+            if (!$original.HasExited) { $original.Kill() }
+            Get-Process -Name "My Canvas" -ErrorAction SilentlyContinue | Stop-Process -Force
+          }
+
       - uses: actions/upload-artifact@v4
         with:
           name: CanvasPlanner-${{ matrix.name }}
           path: dist/*
 
-      # On a version tag (e.g. v0.1.0), also attach the files to a GitHub Release.
+  # The updater reads the latest release, so publish only after both assets pass.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: CanvasPlanner-*
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          fail_on_unmatched_files: true
           generate_release_notes: true

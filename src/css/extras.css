@@ -73,3 +73,4 @@
   width: 7em; padding: 7px 8px; background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px;
 }
+.extras-update .hint:empty { display: none; }

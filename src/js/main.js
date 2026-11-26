@@ -23,6 +23,7 @@ import { COLORS, COLOR_BY_KEY, AUTO, isTask, webLink } from "./model.js";
 import { showMenu, closeMenu, isMenuOpen } from "./menus.js";
 import * as links from "./links.js";
 import { renderDashboard } from "./dashboard.js";
+import { initChecklist } from "./checklist.js";
 import { attachments, imageUrl, storeFile, pickFile, formatSize } from "./attachments.js";
 
 const $ = (s) => document.querySelector(s);
@@ -49,6 +50,7 @@ const filterBar = $("#filter-bar");
 
 const tauri = window.__TAURI__;
 const invoke = tauri?.core?.invoke;
+const updateChecklist = initChecklist({ store, render, newId, getSelectedId: () => selectedId });
 
 // ---------- State ----------
 const cam = { x: innerWidth / 2, y: innerHeight / 2, z: 1 }; // screen = world * z + (x, y)
@@ -460,7 +462,10 @@ function renderMiniature(el, id) {
   const top = Math.min(...boxes.map((b) => b.top));
   const width = Math.max(...boxes.map((b) => b.left + b.w)) - left;
   const height = Math.max(...boxes.map((b) => b.top + b.h)) - top;
-  const scale = Math.min(162 / width, 77 / height, .5);
+  const dashboardPreview = el.classList.contains("dashboard-miniature");
+  const stageWidth = 180;
+  const stageHeight = dashboardPreview ? 126 : 95;
+  const scale = Math.min((stageWidth - 18) / width, (stageHeight - 18) / height, .5);
   const stage = document.createElement("div");
   stage.className = "mini-stage";
   el.append(stage);
@@ -468,10 +473,10 @@ function renderMiniature(el, id) {
     const item = document.createElement("span");
     item.className = `mini-card mini-${box.card.kind}`;
     item.textContent = box.card.title || "";
-    item.style.left = `${(180 - width * scale) / 2 + (box.left - left) * scale}px`;
-    item.style.top = `${(95 - height * scale) / 2 + (box.top - top) * scale}px`;
-    item.style.width = `${Math.max(3, box.w * scale)}px`;
-    item.style.height = `${Math.max(3, box.h * scale)}px`;
+    item.style.left = `${(0.5 + ((box.left - left) - width / 2) * scale / stageWidth) * 100}%`;
+    item.style.top = `${(0.5 + ((box.top - top) - height / 2) * scale / stageHeight) * 100}%`;
+    item.style.width = `${Math.max(3, box.w * scale) / stageWidth * 100}%`;
+    item.style.height = `${Math.max(3, box.h * scale) / stageHeight * 100}%`;
     item.style.setProperty("--mini-color", box.color);
     stage.append(item);
   }
@@ -533,6 +538,10 @@ function renderCard(task, el, i, t) {
     }
     const p = rel.progress(task.id);
     if (p) badge(badges, `✓ ${p.done}/${p.total} subtasks`, p.done === p.total ? "badge-complete" : "");
+    if (active && task.checklist?.length) {
+      const checked = task.checklist.filter((item) => item.done).length;
+      badge(badges, `Checklist ${checked}/${task.checklist.length}`, checked === task.checklist.length ? "badge-complete" : "");
+    }
     if (task.source) badge(badges, task.source);
   } else if (task.kind === "canvas") {
     renderMiniature(el.querySelector(".canvas-miniature"), task.id);
@@ -705,7 +714,7 @@ function select(id) {
 
 function removeIfEmpty(id) {
   const t = store.get(id);
-  if (t && (t.kind === "task" || t.kind === "label") && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due) {
+  if (t && (t.kind === "task" || t.kind === "label") && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due && !t.checklist?.length) {
     const linked = store.board.links.filter((l) => l.from === id || l.to === id).map((l) => l.id);
     store.removeMany({ taskIds: [id] });
     // Never synced, so no need for tombstones.
@@ -731,6 +740,7 @@ function updatePanel() {
   // Refresh fields on a new selection, or when something else changed them (never while typing in them).
   const fresh = panelTaskId !== task.id;
   if (fresh) webLinkInput.value = "";
+  updateChecklist(task, fresh);
   if (task.kind === "task") renderNoteAttachments(task);
   if (fresh || (document.activeElement !== fTitle && fTitle.value !== task.title)) fTitle.value = task.title;
   if (fresh || (document.activeElement !== fNotes && fNotes.value !== task.notes)) fNotes.value = task.notes;

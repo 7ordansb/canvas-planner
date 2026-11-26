@@ -359,6 +359,37 @@ export async function init(app) {
     return lines.join("\n");
   }
 
+  const updateSection = el("section", { class: "extras-update" });
+  if (app.isDesktop) {
+    const updateButton = el("button", { class: "small", text: "Update from GitHub" });
+    const updateStatus = el("p", { class: "hint", role: "status" });
+    updateButton.addEventListener("click", async () => {
+      updateButton.disabled = true;
+      updateStatus.textContent = "Checking GitHub and downloading any available update…";
+      try {
+        const version = await app.invoke("prepare_update");
+        if (!version) {
+          updateStatus.textContent = "You’re using the latest version.";
+          return;
+        }
+        updateStatus.textContent = `Restarting to apply version ${version}…`;
+        await store.flushForRestart();
+        await app.invoke("apply_update");
+      } catch (error) {
+        updateStatus.textContent = `Couldn't update. ${error.message || error}`;
+      } finally {
+        updateButton.disabled = false;
+      }
+    });
+    updateSection.append(el("h3", { class: "extras-h3", text: "App updates" }), updateButton, updateStatus);
+    app.invoke("update_result").then((message) => {
+      if (message) {
+        updateStatus.textContent = message;
+        app.toast(message, { ms: 10000 });
+      }
+    }).catch((error) => console.warn("Could not read update result", error));
+  }
+
   async function openSettings() {
     const body = el("div", { class: "extras-settings" });
     const versionEl = el("span", { text: "…" });
@@ -438,6 +469,7 @@ export async function init(app) {
         el("dt", { text: "Tasks" }), el("dd", { text: `${c.open} open · ${c.done} done · ${c.overdue} overdue` }),
       ]),
     );
+    if (app.isDesktop) body.append(updateSection);
 
     // Diagnostics + backup
     const diagBtn = el("button", { class: "small", text: "Copy diagnostics" });

@@ -7,6 +7,8 @@ use base64::Engine;
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
+mod updater;
+
 const KEYCHAIN_SERVICE: &str = "canvas-planner";
 
 fn data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -157,7 +159,11 @@ fn secret_delete(key: String) -> Result<(), String> {
 }
 
 fn main() {
+    if updater::run_helper() {
+        return;
+    }
     tauri::Builder::default()
+        .manage(updater::State::default())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -170,7 +176,10 @@ fn main() {
             save_attachment,
             read_attachment,
             list_attachments,
-            open_attachment
+            open_attachment,
+            updater::prepare_update,
+            updater::apply_update,
+            updater::update_result
         ])
         .run(tauri::generate_context!())
         .expect("error while running app");

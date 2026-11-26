@@ -49,6 +49,14 @@
       <span>Notes</span>
       <textarea id="f-notes" rows="7" placeholder="Details, links, sub-steps…"></textarea>
     </label>
+    <section class="field task-only" aria-label="Task checklist">
+      <span>Checklist</span>
+      <ol id="f-checklist"></ol>
+      <form id="f-checklist-form" class="row">
+        <input id="f-checklist-item" type="text" placeholder="Add a subtask" aria-label="New subtask" required />
+        <button type="submit" class="small">Add</button>
+      </form>
+    </section>
     <section class="field note-only" aria-label="Note attachments">
       <span>Links and files</span>
       <form id="f-link-form" class="row">

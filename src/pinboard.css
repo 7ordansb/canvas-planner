@@ -7,9 +7,10 @@ html[data-theme="dark"] body{--bg:#242824;--surface:#303630;--ink:#f5f2e7;--mute
 #dashboard h1{font-size:clamp(54px,8vw,90px);line-height:.95;letter-spacing:-.035em;margin:0 0 28px}
 .stamp{text-transform:uppercase;color:var(--accent);letter-spacing:.09em;margin:0 0 6px}
 .review-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(210px,1fr);gap:32px;border-top:3px solid var(--ink);padding:22px 0}
-.dashboard-workspaces{margin:0}.dashboard-tiles{grid-template-columns:repeat(auto-fit,minmax(155px,1fr))}
-.dashboard-tile{border-radius:3px;padding:10px;gap:5px}.dashboard-miniature{height:156px;border-radius:1px}.dashboard-miniature .mini-stage{transform:translate(-50%,-50%) scale(1.28)}
-.dashboard-tile>strong{font-size:23px}.agenda{border-left:1px solid var(--line);padding-left:22px}.dashboard-schedule{display:block}.dashboard-widget{border:0;border-radius:0;padding:8px 0;background:transparent}.dashboard-task{background:var(--surface);border:1px solid var(--line);padding:10px;text-align:left}
+.dashboard-workspaces{margin:0}.dashboard-tiles{grid-template-columns:repeat(auto-fill,minmax(min(155px,100%),210px))}
+.dashboard-tile{width:100%;min-width:0;aspect-ratio:1;grid-template-rows:minmax(0,1fr) auto auto;border-radius:3px;padding:10px;gap:5px}
+.dashboard-miniature{height:auto;border-radius:1px}.dashboard-miniature .mini-stage{width:100%;height:100%}
+.dashboard-tile>strong{font-size:23px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.agenda{border-left:1px solid var(--line);padding-left:22px}.dashboard-schedule{display:block}.dashboard-widget{border:0;border-radius:0;padding:8px 0;background:transparent}.dashboard-task{background:var(--surface);border:1px solid var(--line);padding:10px;text-align:left}
 .dashboard-metrics{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}.dashboard-metric{border:0;background:none;padding:0 12px 0 0;display:flex;align-items:baseline;gap:5px}.dashboard-metric strong{order:-1;font-size:15px}
 button.primary,#toolbar>#btn-new{background:#244ccc;color:white;border-radius:4px}.card.kind-task{border-radius:3px;box-shadow:0 1px 2px #0002}.card.overdue{border-left:5px solid #bd472b}.card.kind-canvas{border-radius:4px;background:var(--surface);color:var(--ink);box-shadow:0 0 0 2px var(--ink)}.popup-menu{border-radius:6px}.menu-icon{border-radius:3px;color:var(--accent)}
 @media(max-width:750px){.review-layout{grid-template-columns:1fr}.agenda{border:0;padding:0}}

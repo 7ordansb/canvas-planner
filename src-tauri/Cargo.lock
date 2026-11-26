@@ -413,11 +413,15 @@ version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "keyring",
+ "semver",
+ "serde",
  "serde_json",
+ "sha2 0.11.1",
  "tauri",
  "tauri-build",
  "tauri-plugin-http",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]

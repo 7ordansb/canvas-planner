@@ -20,6 +20,15 @@ export const KINDS = ["task", "image", "file", "canvas", "label"];
 
 export const isTask = (card) => card?.kind === "task" && card.taskMode !== false;
 
+export function normalizeChecklist(items) {
+  const ids = new Set();
+  return (Array.isArray(items) ? items : []).flatMap((item) => {
+    if (!item || typeof item.id !== "string" || !item.id || typeof item.title !== "string" || ids.has(item.id)) return [];
+    ids.add(item.id);
+    return [{ id: item.id, title: item.title, done: item.done === true }];
+  });
+}
+
 /**
  * Link types. A link always has a direction (from → to); some types use it.
  *   related – just connected

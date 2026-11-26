@@ -2,7 +2,7 @@
 // Inside the desktop app it saves via Rust to a file in the app's data folder.
 // Opened in a plain browser (for development) it falls back to localStorage.
 
-import { KINDS, COLOR_BY_KEY, LINK_TYPES, webLink } from "./model.js";
+import { KINDS, COLOR_BY_KEY, LINK_TYPES, normalizeChecklist, webLink } from "./model.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 
@@ -38,6 +38,7 @@ function normalize(data) {
       createdAt: t.createdAt || now,
       updatedAt: t.updatedAt || t.createdAt || now,
       completedAt: t.completedAt || null,
+      ...(t.checklist === undefined ? {} : { checklist: normalizeChecklist(t.checklist) }),
       ...(Array.isArray(t.webLinks) ? { webLinks: [...new Set(t.webLinks.map(webLink).filter(Boolean))] } : {}),
     }));
   const canvases = new Map(tasks.filter((t) => t.kind === "canvas").map((t) => [t.id, t]));
@@ -98,6 +99,7 @@ export async function load() {
 }
 
 let timer = null;
+let writing = Promise.resolve(true);
 export function save({ silent = false } = {}) {
   clearTimeout(timer);
   timer = setTimeout(flush, 300);
@@ -112,16 +114,34 @@ export function setBoard(data, { silent = true } = {}) {
 
 export { normalize };
 
-export async function flush() {
-  if (timer === null) return;
+export function flush() {
+  if (timer === null) return writing;
   clearTimeout(timer);
   timer = null;
   const json = JSON.stringify(board, null, 1);
-  try {
-    if (invoke) await invoke("save_board", { json });
-    else localStorage.setItem("board", json);
-  } catch (e) {
-    onError(String(e));
+  writing = writing.then(async () => {
+    try {
+      if (invoke) await invoke("save_board", { json });
+      else localStorage.setItem("board", json);
+      return true;
+    } catch (e) {
+      onError(String(e));
+      return false;
+    }
+  });
+  return writing;
+}
+
+export async function flushForRestart() {
+  for (;;) {
+    const pending = flush();
+    const saved = await pending;
+    if (timer !== null || writing !== pending) continue;
+    if (!saved) {
+      save({ silent: true });
+      throw new Error("The board couldn't be saved. Try again before restarting.");
+    }
+    return;
   }
 }
 
