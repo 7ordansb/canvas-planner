@@ -2,7 +2,8 @@
 // Inside the desktop app it saves via Rust to a file in the app's data folder.
 // Opened in a plain browser (for development) it falls back to localStorage.
 
-import { KINDS, COLOR_BY_KEY, LINK_TYPES, normalizeChecklist, webLink } from "./model.js";
+import { KINDS, COLOR_BY_KEY, LINK_TYPES, checklistCompletion, normalizeChecklist, webLink } from "./model.js";
+import { normalizeTimer } from "./timer.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
 
@@ -43,6 +44,10 @@ function normalize(data) {
     }));
   const canvases = new Map(tasks.filter((t) => t.kind === "canvas").map((t) => [t.id, t]));
   for (const task of tasks) {
+    if (task.kind === "timer") task.timer = normalizeTimer(task.timer);
+    if (task.kind === "task" && task.checklist?.length) {
+      task.completedAt = checklistCompletion(task, task.checklist, task.updatedAt);
+    }
     if (!canvases.has(task.canvasId)) task.canvasId = null;
   }
   // Concurrent moves can form a cycle. Detach the same canvas on every device.
@@ -150,7 +155,11 @@ export const get = (id) => board.tasks.find((t) => t.id === id);
 export function update(id, patch) {
   const t = get(id);
   if (!t) return;
-  Object.assign(t, patch, { updatedAt: new Date().toISOString() });
+  const updatedAt = new Date().toISOString();
+  Object.assign(t, patch, { updatedAt });
+  if (t.kind === "task" && t.checklist?.length) {
+    t.completedAt = checklistCompletion(t, t.checklist, updatedAt);
+  }
   save();
 }
 

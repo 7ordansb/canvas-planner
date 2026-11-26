@@ -16,9 +16,21 @@ export const COLOR_BY_KEY = Object.fromEntries(COLORS.map((c) => [c.key, c]));
 export const AUTO = "auto";
 
 /** Kinds of element that can sit on a canvas. */
-export const KINDS = ["task", "image", "file", "canvas", "label"];
+export const KINDS = ["task", "image", "file", "canvas", "label", "timer"];
 
 export const isTask = (card) => card?.kind === "task" && card.taskMode !== false;
+export const NOTE_STYLES = {
+  card: "Card",
+  sticky: "Sticky note",
+  circle: "Mind-map circle",
+  document: "Document",
+};
+export const noteStyle = (value) => Object.hasOwn(NOTE_STYLES, value) ? value : "card";
+
+export function checklistCompletion(task, items, at = new Date().toISOString()) {
+  if (!items?.length) return task.completedAt ?? null;
+  return items.every((item) => item.done) ? task.completedAt || at : null;
+}
 
 export function normalizeChecklist(items) {
   const ids = new Set();

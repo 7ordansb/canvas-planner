@@ -19,12 +19,13 @@ addEventListener("unhandledrejection", (e) => logErr("unhandledrejection", [e.re
 
 import { growthOf, daysUntilDue, DAY, GROWTH } from "./growth.js";
 import * as store from "./store.js";
-import { COLORS, COLOR_BY_KEY, AUTO, isTask, webLink } from "./model.js";
+import { COLORS, COLOR_BY_KEY, AUTO, NOTE_STYLES, isTask, noteStyle, webLink } from "./model.js";
 import { showMenu, closeMenu, isMenuOpen } from "./menus.js";
 import * as links from "./links.js";
 import { renderDashboard } from "./dashboard.js";
 import { initChecklist } from "./checklist.js";
 import { attachments, imageUrl, storeFile, pickFile, formatSize } from "./attachments.js";
+import { TIMER_MODES, MAX_TIMER_LIMIT, normalizeTimer, timerReading, timerText, changeTimer } from "./timer.js";
 
 const $ = (s) => document.querySelector(s);
 const canvas = $("#canvas");
@@ -47,6 +48,18 @@ const webLinkInput = $("#f-link-url");
 const toolbar = $("#toolbar");
 const crumbs = $("#crumbs");
 const filterBar = $("#filter-bar");
+const addMenuButton = $("#btn-add-menu");
+const styleInput = $("#f-note-style");
+const timerMode = $("#f-timer-mode");
+const timerLimit = $("#f-timer-limit");
+const timerLimitField = $("#f-timer-limit-field");
+const timerLimitLabel = $("#f-timer-limit-label");
+const checklistProgress = $("#f-checklist-progress");
+
+for (const [select, options] of [[styleInput, NOTE_STYLES], [timerMode, TIMER_MODES]]) {
+  for (const [value, label] of Object.entries(options)) select.add(new Option(label, value));
+}
+timerLimit.max = String(MAX_TIMER_LIMIT);
 
 const tauri = window.__TAURI__;
 const invoke = tauri?.core?.invoke;
@@ -62,6 +75,7 @@ let panelTaskId = null;
 let hideDone = false;
 let hiddenColors = new Set();
 const els = new Map(); // element id -> card element (only those visible on this canvas)
+const liveTimers = new Map();
 const decorators = []; // feature hooks: (task, el) => void, run on every render
 let rel = links.computeRelations();
 
@@ -85,7 +99,7 @@ const cameraKey = () => (currentCanvas ? `camera:${currentCanvas}` : "camera");
 let camSaveTimer = null;
 let previousZoom;
 function setCardDetail(el) {
-  el.classList.toggle("distant", el.dataset.kind === "task" && el.offsetWidth * cam.z < 100);
+  el.classList.toggle("distant", ["task", "timer"].includes(el.dataset.kind) && el.offsetWidth * cam.z < 100);
 }
 
 function applyCamera() {
@@ -223,7 +237,7 @@ function newWorkspace() {
     const title = input.value.trim();
     if (!title) { input.focus(); return; }
     const card = createTask({ kind: "canvas", title, canvasId: null, workspace: true, x: 0, y: 0 });
-    for (const [key, fallback] of [["growth", {}], ["defaultTaskMode", false], ["hideDone", false]]) {
+    for (const [key, fallback] of [["growth", {}], ["defaultTaskMode", false], ["defaultNoteStyle", "card"], ["hideDone", false]]) {
       settings.set(`canvas:${card.id}:${key}`, settings.get(key, fallback));
     }
     modal.close();
@@ -303,24 +317,31 @@ function renderCrumbs() {
   home.className = "back-dashboard";
   home.addEventListener("click", openDashboard);
   crumbs.appendChild(home);
+  const trail = document.createElement("div");
+  trail.className = "crumb-trail";
+  crumbs.append(trail);
   if (!getWorkspace()) {
     const original = document.createElement(currentCanvas ? "button" : "span");
     original.textContent = "Original canvas";
     if (currentCanvas) original.addEventListener("click", () => enterCanvas(null));
-    crumbs.append("›", original);
+    trail.append("›", original);
   }
   path.forEach((c, i) => {
-    crumbs.appendChild(Object.assign(document.createElement("span"), { className: "crumb-sep", textContent: "›" }));
+    trail.appendChild(Object.assign(document.createElement("span"), { className: "crumb-sep", textContent: "›" }));
     if (i < path.length - 1) {
       const b = document.createElement("button");
       b.textContent = c.title || "Untitled canvas";
       b.addEventListener("click", () => enterCanvas(c.id));
-      crumbs.appendChild(b);
+      b.title = b.textContent;
+      trail.appendChild(b);
     } else {
-      crumbs.appendChild(Object.assign(document.createElement("span"), { className: "crumb-current", textContent: c.title || "Untitled canvas" }));
+      const current = Object.assign(document.createElement("span"), { className: "crumb-current", textContent: c.title || "Untitled canvas" });
+      current.title = current.textContent;
+      current.setAttribute("aria-current", "page");
+      trail.appendChild(current);
     }
   });
-  crumbs.scrollLeft = crumbs.scrollWidth;
+  trail.scrollLeft = trail.scrollWidth;
 }
 
 /** Move an element into a sub-canvas (links to things outside it are removed). */
@@ -396,8 +417,19 @@ function createCardEl(task) {
     case "label":
       el.innerHTML = `<div class="title"></div><span class="resize-grip" title="Drag to resize"></span>`;
       break;
+    case "timer":
+      el.innerHTML = `<div class="title"></div>
+        <div class="timer-value" role="timer" aria-live="off"></div>
+        <div class="timer-controls">
+          <button type="button" data-timer-action="toggle"></button>
+          <button type="button" data-timer-action="reset">Reset</button>
+        </div>`;
+      break;
     default:
-      el.innerHTML = `<button class="check" title="Mark complete"></button><div class="title"></div><div class="notes"></div><div class="meta"></div><div class="badges"></div><span class="resize-grip" title="Drag to resize"></span>`;
+      el.innerHTML = `<button class="check" title="Mark complete"></button>
+        <div class="note-content"><div class="title"></div><div class="notes"></div></div>
+        <div class="meta"></div><div class="checklist-count" hidden></div><div class="badges"></div>
+        <span class="resize-grip" title="Drag to resize"></span>`;
   }
   return el;
 }
@@ -413,6 +445,22 @@ function paint(el, task, autoHue) {
   const c = COLOR_BY_KEY[task.color];
   el.style.setProperty("--hue", String(c ? c.hue : autoHue));
   el.style.setProperty("--sat", `${c ? c.sat : 92}%`);
+}
+
+function renderTimer(task, el, time) {
+  const timer = task.timer;
+  const reading = timerReading(timer, time);
+  const value = el.querySelector(".timer-value");
+  setText(value, timerText(timer.mode, reading.value));
+  const label = task.title || "Timer";
+  if (value.getAttribute("aria-label") !== label) value.setAttribute("aria-label", label);
+  const state = reading.finished ? "finished" : reading.running ? "running" : "paused";
+  if (el.dataset.timerState !== state) el.dataset.timerState = state;
+  setText(el.querySelector('[data-timer-action="toggle"]'),
+    reading.finished ? "Restart" : reading.running ? "Pause" : timer.elapsedMs ? "Resume" : "Start");
+  el.querySelector('[data-timer-action="reset"]').disabled = timer.startedAt === null && timer.elapsedMs === 0;
+  if (reading.running) liveTimers.set(task.id, el);
+  else liveTimers.delete(task.id);
 }
 
 /** Summary and growth include tasks on every level of the sub-canvas. */
@@ -440,10 +488,13 @@ function renderMiniature(el, id) {
   const boxes = cards.map((card) => {
     const g = isTask(card) ? growthOf(card, now(), settingsForPreview) : { scale: 1, hue: 50 };
     const label = card.kind === "label";
-    const w = label ? Math.min(600, (card.title?.length || 1) * 15) : (card.w || 190) * g.scale;
-    const h = label ? (card.fontSize || 26) * 1.25 : (card.h || 72) * g.scale;
+    const style = card.kind === "task" ? noteStyle(card.noteStyle) : null;
+    const w = label ? Math.min(600, (card.title?.length || 1) * 15)
+      : (card.w || (style === "document" ? 370 : style === "circle" ? 200 : card.kind === "timer" ? 200 : 190)) * g.scale;
+    const h = label ? (card.fontSize || 26) * 1.25 : style === "circle" ? w
+      : (card.h || (style === "document" ? 280 : card.kind === "timer" ? 120 : 72)) * g.scale;
     const colour = COLOR_BY_KEY[card.color];
-    return { card, left: card.x - w / 2, top: card.y - h / 2, w, h,
+    return { card, style, left: card.x - w / 2, top: card.y - h / 2, w, h,
       color: `hsl(${colour?.hue ?? g.hue} ${colour?.sat ?? 92}% 79%)` };
   });
   const signature = JSON.stringify(boxes.map(({ card, ...box }) => [card.title, card.kind, card.completedAt, box]));
@@ -472,6 +523,7 @@ function renderMiniature(el, id) {
   for (const box of boxes) {
     const item = document.createElement("span");
     item.className = `mini-card mini-${box.card.kind}`;
+    if (box.style) item.dataset.noteStyle = box.style;
     item.textContent = box.card.title || "";
     item.style.left = `${(0.5 + ((box.left - left) - width / 2) * scale / stageWidth) * 100}%`;
     item.style.top = `${(0.5 + ((box.top - top) - height / 2) * scale / stageHeight) * 100}%`;
@@ -493,6 +545,7 @@ function renderCard(task, el, i, t) {
   const title = el.querySelector(".title");
 
   if (task.kind === "task") {
+    el.dataset.noteStyle = noteStyle(task.noteStyle);
     if (drag?.kind !== "resize" || drag.id !== task.id) {
       setNoteSize(el, task.w, task.h);
       el.classList.toggle("sized", Number.isFinite(task.w) || Number.isFinite(task.h));
@@ -506,6 +559,12 @@ function renderCard(task, el, i, t) {
       setText(title, task.title || "Label");
       title.classList.toggle("placeholder", !task.title);
     }
+  } else if (task.kind === "timer") {
+    if (!editing) {
+      setText(title, task.title || "Timer");
+      title.classList.toggle("placeholder", !task.title);
+    }
+    renderTimer(task, el, t);
   } else if (task.kind === "task") {
     const active = isTask(task);
     el.classList.toggle("plain-note", !active);
@@ -525,9 +584,30 @@ function renderCard(task, el, i, t) {
     const meta = !active ? "" : task.completedAt ? "Done" : covered ? `Covered by “${covered.title || "Untitled"}”` : dueText(task, t);
     setText(el.querySelector(".meta"), meta);
     const check = el.querySelector(".check");
-    check.hidden = !active;
+    const hasChecklist = active && task.checklist?.length > 0;
+    el.classList.toggle("has-checklist", hasChecklist);
+    check.hidden = !active || hasChecklist;
     setText(check, task.completedAt ? "✓" : "");
     check.title = task.completedAt ? "Mark not done" : "Mark complete";
+    const count = el.querySelector(".checklist-count");
+    count.hidden = !hasChecklist;
+    if (hasChecklist) {
+      const checked = task.checklist.filter((item) => item.done).length;
+      const total = task.checklist.length;
+      setText(count, `${checked}/${total}`);
+      count.setAttribute("aria-label", `${checked} of ${total} subtasks complete`);
+      count.style.setProperty("--fraction", `${checked * 100 / total}%`);
+    }
+    const body = el.querySelector(".notes");
+    if (el.dataset.noteStyle === "document" && task.notes) {
+      body.tabIndex = 0;
+      body.setAttribute("role", "region");
+      body.setAttribute("aria-label", "Document text");
+    } else {
+      body.removeAttribute("tabindex");
+      body.removeAttribute("role");
+      body.removeAttribute("aria-label");
+    }
 
     const badges = el.querySelector(".badges");
     badges.textContent = "";
@@ -538,10 +618,6 @@ function renderCard(task, el, i, t) {
     }
     const p = rel.progress(task.id);
     if (p) badge(badges, `✓ ${p.done}/${p.total} subtasks`, p.done === p.total ? "badge-complete" : "");
-    if (active && task.checklist?.length) {
-      const checked = task.checklist.filter((item) => item.done).length;
-      badge(badges, `Checklist ${checked}/${task.checklist.length}`, checked === task.checklist.length ? "badge-complete" : "");
-    }
     if (task.source) badge(badges, task.source);
   } else if (task.kind === "canvas") {
     renderMiniature(el.querySelector(".canvas-miniature"), task.id);
@@ -588,6 +664,7 @@ function render() {
   dashboard.hidden = !dashboardOpen;
   canvas.hidden = dashboardOpen;
   if (dashboardOpen) {
+    liveTimers.clear();
     hint.hidden = true;
     panel.hidden = true;
     renderDashboard(app, dashboard);
@@ -625,6 +702,7 @@ function render() {
       cardResize.unobserve(el);
       el.remove();
       els.delete(id);
+      liveTimers.delete(id);
     }
   }
   hint.hidden = store.board.tasks.some((x) => (x.canvasId ?? null) === currentCanvas && !x.workspace);
@@ -736,17 +814,30 @@ function updatePanel() {
   if (!task) { panelTaskId = null; return; }
   panel.dataset.kind = task.kind;
   panel.dataset.taskMode = String(isTask(task));
+  panel.dataset.hasChecklist = String(isTask(task) && task.checklist?.length > 0);
   taskMode.checked = isTask(task);
   // Refresh fields on a new selection, or when something else changed them (never while typing in them).
   const fresh = panelTaskId !== task.id;
   if (fresh) webLinkInput.value = "";
   updateChecklist(task, fresh);
+  if (task.kind === "task") {
+    styleInput.value = noteStyle(task.noteStyle);
+    setText(checklistProgress, task.checklist?.length
+      ? `${task.checklist.filter((item) => item.done).length}/${task.checklist.length}` : "");
+  }
+  if (task.kind === "timer") {
+    const { mode, limit } = task.timer;
+    timerMode.value = mode;
+    timerLimitField.hidden = mode === "elapsed";
+    setText(timerLimitLabel, mode === "count-up" ? "Target number" : mode === "count-down" ? "Starting number" : "Duration in seconds");
+    if (fresh || document.activeElement !== timerLimit) timerLimit.value = String(limit);
+  }
   if (task.kind === "task") renderNoteAttachments(task);
   if (fresh || (document.activeElement !== fTitle && fTitle.value !== task.title)) fTitle.value = task.title;
   if (fresh || (document.activeElement !== fNotes && fNotes.value !== task.notes)) fNotes.value = task.notes;
   panelTaskId = task.id;
   if (document.activeElement !== fDue) fDue.value = task.due || "";
-  fTitle.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
+  fTitle.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : task.kind === "timer" ? "Timer label" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
 
   // Colour swatches
   const sig = `${task.id}:${colorKey(task)}`;
@@ -822,6 +913,22 @@ taskMode.addEventListener("change", () => {
   store.update(selectedId, { taskMode: taskMode.checked });
   render();
 });
+styleInput.addEventListener("change", () => {
+  if (store.get(selectedId)?.kind !== "task") return;
+  store.update(selectedId, { noteStyle: noteStyle(styleInput.value) });
+  render();
+});
+function configureTimer(patch) {
+  const task = store.get(selectedId);
+  if (task?.kind !== "timer") return;
+  store.update(task.id, { timer: normalizeTimer({ ...task.timer, ...patch, elapsedMs: 0, startedAt: null }) });
+  render();
+}
+timerMode.addEventListener("change", () => configureTimer({ mode: timerMode.value }));
+timerLimit.addEventListener("change", () => {
+  if (timerLimit.value && timerLimit.validity.valid) configureTimer({ limit: timerLimit.valueAsNumber });
+  else timerLimit.value = store.get(selectedId)?.timer?.limit ?? "";
+});
 $("#f-link-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const note = store.get(selectedId);
@@ -884,7 +991,7 @@ function startEdit(id, field = "title") {
   titleEl.classList.remove("placeholder");
   titleEl.textContent = task.title;
   titleEl.contentEditable = EDIT_MODE;
-  titleEl.dataset.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
+  titleEl.dataset.placeholder = fTitle.placeholder;
   if (notesEl) {
     notesEl.textContent = task.notes;
     notesEl.contentEditable = EDIT_MODE;
@@ -957,6 +1064,8 @@ function createTask({ title = "", notes = "", due = null, x, y, completedAt = nu
     ...extra, id: newId(), kind, title, notes, due, color, canvasId,
     x, y, createdAt: iso, updatedAt: iso, completedAt,
   };
+  if (kind === "task") task.noteStyle = noteStyle(extra.noteStyle ?? canvasSettings.get("defaultNoteStyle", "card"));
+  if (kind === "timer") task.timer = normalizeTimer(extra.timer);
   store.add(task);
   return task;
 }
@@ -1002,6 +1111,11 @@ function newTaskAt(x, y) {
 function toggleComplete(id) {
   const t = store.get(id);
   if (!isTask(t)) return;
+  if (t.checklist?.length) {
+    select(id);
+    $("#f-checklist input")?.focus();
+    return;
+  }
   store.update(id, { completedAt: t.completedAt ? null : new Date().toISOString() });
   render();
 }
@@ -1182,7 +1296,7 @@ function spotBeside(id, side) {
 }
 
 /** The menu behind the "+": new linked task, image, file, sub-canvas. */
-function showPlusMenu(fromId, sx, sy, pos) {
+function showPlusMenu(fromId, sx, sy, pos, anchor) {
   const destination = currentCanvas;
   const linkTo = (t) => (fromId ? links.connect(fromId, t.id) : null);
   const addText = (fields) => {
@@ -1191,10 +1305,11 @@ function showPlusMenu(fromId, sx, sy, pos) {
     select(t.id);
     startEdit(t.id);
   };
-  showMenu(sx, sy, [
+  const menu = showMenu(sx, sy, [
     { header: fromId ? "Add and link" : "Add here" },
     { label: "Note", icon: "✎", onClick: () => addText({ taskMode: false }) },
     { label: "Label", icon: "T", hint: "Text directly on the canvas", onClick: () => addText({ kind: "label" }) },
+    { label: "Timer", icon: "◷", hint: "Stopwatch, countdown or number counter", onClick: () => addText({ kind: "timer" }) },
     {
       label: "Task", icon: "✎", hint: fromId ? "A new card, linked to this one" : "A new card",
       onClick: () => {
@@ -1205,6 +1320,26 @@ function showPlusMenu(fromId, sx, sy, pos) {
           const s = toScreen(t.x, t.y);
           links.showLinkMenu(link.id, s.x + 20, s.y + 40, { onClose: () => startEdit(t.id) });
         } else startEdit(t.id);
+      },
+    },
+    { label: "Document", icon: "▤", hint: "Write and read long text on the canvas",
+      onClick: () => addText({ noteStyle: "document", taskMode: false }) },
+    {
+      label: "Import document…", icon: "↥", hint: "Read a text or Markdown file on the canvas",
+      onClick: async () => {
+        const file = await pickFile(".txt,.md,.markdown");
+        if (!file) return;
+        if (!/\.(txt|md|markdown)$/i.test(file.name)) return toast("Choose a text or Markdown document.");
+        if (file.size > 512 * 1024) return toast("Document text must be 512 KB or smaller.");
+        try {
+          const notes = await file.text();
+        if (dashboardOpen || destination !== currentCanvas) return toast("Return to the canvas where you started the import.");
+          const t = createTask({ ...pos, title: file.name, notes, noteStyle: "document", taskMode: false });
+          linkTo(t);
+          select(t.id);
+        } catch {
+          toast("Couldn't read the document.");
+        }
       },
     },
     {
@@ -1224,7 +1359,18 @@ function showPlusMenu(fromId, sx, sy, pos) {
         startEdit(t.id);
       },
     },
-  ], { className: "plus-menu" });
+  ], {
+    className: "plus-menu",
+    anchor,
+    onClose: anchor && (() => {
+      anchor.setAttribute("aria-expanded", "false");
+      anchor.focus();
+    }),
+  });
+  if (anchor) {
+    anchor.setAttribute("aria-expanded", "true");
+    menu.querySelector("button")?.focus();
+  }
 }
 
 // ---------- Right-click menu ----------
@@ -1240,10 +1386,12 @@ canvas.addEventListener("contextmenu", (e) => {
   if (!t) return;
   select(t.id);
   const items = [];
-  if (t.kind === "task" || t.kind === "label") {
+  if (t.kind === "task" || t.kind === "label" || t.kind === "timer") {
     items.push({ label: "Edit", icon: "✎", onClick: () => startEdit(t.id) });
     if (t.kind === "task") items.push({ label: "Attach file…", icon: "+", onClick: () => $("#btn-attach-file").click() });
-    if (isTask(t)) items.push({ label: t.completedAt ? "Mark not done" : "Mark complete", icon: "✓", onClick: () => toggleComplete(t.id) });
+    if (isTask(t)) items.push({ label: t.checklist?.length ? "Open checklist" : t.completedAt ? "Mark not done" : "Mark complete",
+      icon: "✓", onClick: () => toggleComplete(t.id) });
+    if (t.kind === "timer") items.push({ label: "Timer settings", icon: "◷", onClick: () => timerMode.focus() });
   } else {
     items.push({ label: t.kind === "canvas" ? "Open" : "Open file", icon: "↗", onClick: () => openElement(t.id) });
     items.push({ label: "Rename", icon: "✎", onClick: () => startEdit(t.id) });
@@ -1265,8 +1413,8 @@ canvas.addEventListener("contextmenu", (e) => {
 
 // ---------- Pointer input: pan, drag cards, draw links ----------
 function setNoteSize(el, width, height) {
-  el.style.setProperty("--note-width", Number.isFinite(width) ? `${width}px` : "190px");
-  el.style.setProperty("--note-height", Number.isFinite(height) ? `${height}px` : "72px");
+  el.style.setProperty("--note-width", Number.isFinite(width) ? `${width}px` : "");
+  el.style.setProperty("--note-height", Number.isFinite(height) ? `${height}px` : "");
 }
 
 let drag = null;
@@ -1293,8 +1441,9 @@ canvas.addEventListener("pointerdown", (e) => {
     canvas.setPointerCapture(e.pointerId);
     return;
   }
-  if (e.target.closest(".check, .link-chip, .link-hit")) return; // handled on click
+  if (e.target.closest(".check, .timer-controls, .link-chip, .link-hit")) return; // handled on click
   if (e.target.closest("[contenteditable]")) return; // placing the caret while editing
+  if (e.button === 0 && e.target.closest('[data-note-style="document"] .notes')) return; // reading and text selection
   if (e.target === handle && handleFor && e.button === 0) {
     const t = store.get(handleFor.id);
     drag = { kind: "link", from: handleFor.id, side: handleFor.side, start: links.sidePoint(t, handleFor.side, 0), sx: e.clientX, sy: e.clientY, moved: false };
@@ -1323,7 +1472,11 @@ canvas.addEventListener("pointerdown", (e) => {
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (!drag) { updateHandle(e.clientX, e.clientY); return; }
+  if (!drag) {
+    if (e.target.closest('[data-note-style="document"] .notes')) hideHandle();
+    else updateHandle(e.clientX, e.clientY);
+    return;
+  }
   const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
   if (!drag.moved && Math.hypot(dx, dy) < 4) return;
   if (!drag.moved) {
@@ -1349,8 +1502,10 @@ canvas.addEventListener("pointermove", (e) => {
       drag.newFontSize = Math.round(Math.max(12, Math.min(140, drag.fontSize + (dx + dy) / (3 * cam.z))));
       el.style.setProperty("--label-size", `${drag.newFontSize}px`);
     } else {
-      drag.w = Math.round(Math.max(140, Math.min(1000, (width + dx / cam.z) / scale)));
-      drag.h = Math.round(Math.max(72, Math.min(1000, (height + dy / cam.z) / scale)));
+      const circle = el.dataset.noteStyle === "circle";
+      const delta = circle ? (dx + dy) / 2 : dx;
+      drag.w = Math.round(Math.max(140, Math.min(1000, (width + delta / cam.z) / scale)));
+      drag.h = circle ? undefined : Math.round(Math.max(72, Math.min(1000, (height + dy / cam.z) / scale)));
       setNoteSize(el, drag.w, drag.h);
     }
     drag.x = ox + (el.offsetWidth - width) / 2;
@@ -1440,6 +1595,15 @@ canvas.addEventListener("pointerleave", () => { if (!drag) hideHandle(); });
 canvas.addEventListener("click", (e) => {
   if (e.detail && suppressCanvasClick) return;
   const hit = e.detail ? document.elementFromPoint(e.clientX, e.clientY) : e.target;
+  const timerButton = hit?.closest("[data-timer-action]");
+  if (timerButton && e.target.closest("[data-timer-action]") === timerButton) {
+    const task = store.get(timerButton.closest(".card").dataset.id);
+    if (task?.kind === "timer") {
+      store.update(task.id, { timer: changeTimer(task.timer, timerButton.dataset.timerAction) });
+      render();
+    }
+    return;
+  }
   const check = hit?.closest(".check");
   if (check && e.target.closest(".check") === check) return toggleComplete(check.closest(".card").dataset.id);
   const linkEl = hit?.closest(".link-chip, .link-hit");
@@ -1449,12 +1613,12 @@ canvas.addEventListener("click", (e) => {
 canvas.addEventListener("dblclick", (e) => {
   if (suppressCanvasClick) return;
   const hit = document.elementFromPoint(e.clientX, e.clientY);
-  if (hit?.closest(".check, #link-handle, .link-chip, .link-hit, .resize-grip, [contenteditable]")) return;
+  if (hit?.closest('.check, .timer-controls, #link-handle, .link-chip, .link-hit, .resize-grip, [contenteditable], [data-note-style="document"] .notes')) return;
   const cardEl = hit?.closest(".card");
   if (cardEl) {
     const t = store.get(cardEl.dataset.id);
     if (!t) return;
-    if (t.kind === "task" || t.kind === "label") startEdit(t.id, hit.closest(".notes") ? "notes" : "title");
+    if (t.kind === "task" || t.kind === "label" || t.kind === "timer") startEdit(t.id, hit.closest(".notes") ? "notes" : "title");
     else if (t.kind === "image" || t.kind === "file") openElement(t.id);
     return;
   }
@@ -1491,6 +1655,7 @@ let gestureActive = false;
 let gestureStartZ = 1;
 
 canvas.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey && e.target.closest('[data-note-style="document"]:not(.distant) .notes')) return;
   e.preventDefault();
   closeMenu();
   if (e.ctrlKey || e.metaKey) {
@@ -1525,7 +1690,7 @@ addEventListener("keydown", (e) => {
   for (const fn of keyHandlers) if (fn(e)) { e.preventDefault(); return; }
   if (dashboardOpen) return;
   const mod = e.metaKey || e.ctrlKey;
-  if (isTyping(e.target)) {
+  if (isTyping(e.target) || e.target.matches?.('[data-note-style="document"] .notes')) {
     if (e.key === "Escape") e.target.blur();
     return;
   }
@@ -1568,6 +1733,14 @@ $("#btn-new").addEventListener("click", () => {
   const c = viewCenterWorld();
   newTaskAt(c.x, c.y);
 });
+addMenuButton.addEventListener("click", () => {
+  if (addMenuButton.getAttribute("aria-expanded") === "true") return closeMenu();
+  const bounds = addMenuButton.closest(".add-split").getBoundingClientRect();
+  showPlusMenu(null, bounds.left, bounds.bottom + 6, viewCenterWorld(), addMenuButton);
+});
+new ResizeObserver(() => {
+  document.body.style.setProperty("--toolbar-bottom", `${toolbar.getBoundingClientRect().bottom}px`);
+}).observe(toolbar);
 for (const [id, factor] of [["zoom-in", 1.2], ["zoom-out", 1 / 1.2]]) {
   document.getElementById(id).addEventListener("click", () => {
     const r = viewRect();
@@ -1682,6 +1855,7 @@ export const app = {
   toast,                     // (message, {action, onAction, ms})
   openModal,                 // (title, htmlOrElement, {onClose}) -> {el, body, close}
   toolbarSlot: $("#toolbar-slot"),
+  canvasActions: $("#canvas-actions"),
   addDecorator: (fn) => decorators.push(fn),       // (task, cardEl) on every render
   addKeyHandler: (fn) => keyHandlers.push(fn),     // (keydownEvent) -> true if handled
   settings,                  // per-device preferences (not synced)
@@ -1715,6 +1889,14 @@ async function start() {
   openDashboard();
 
   setInterval(render, 60 * 1000); // let cards keep growing while the app is open
+  setInterval(() => {
+    const time = now();
+    for (const [id, el] of liveTimers) {
+      const task = store.get(id);
+      if (task) renderTimer(task, el, time);
+      else liveTimers.delete(id);
+    }
+  }, 200);
 
   for (const name of ["sync", "importer", "extras"]) {
     try {

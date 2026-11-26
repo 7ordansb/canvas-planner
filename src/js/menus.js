@@ -21,7 +21,7 @@ export function closeMenu() {
 }
 
 function onOutside(e) {
-  if (open && !open.el.contains(e.target)) closeMenu();
+  if (open && !open.el.contains(e.target) && !open.anchor?.contains(e.target)) closeMenu();
 }
 
 function onKey(e) {
@@ -43,7 +43,7 @@ function onKey(e) {
 }
 
 /** Show a menu with its top-left near screen point (x, y). */
-export function showMenu(x, y, items, { onClose, className = "" } = {}) {
+export function showMenu(x, y, items, { onClose, className = "", anchor } = {}) {
   closeMenu();
   const el = document.createElement("div");
   el.className = `popup-menu ${className}`;
@@ -77,7 +77,7 @@ export function showMenu(x, y, items, { onClose, className = "" } = {}) {
       b.className = `menu-item${it.checked ? " checked" : ""}${it.danger ? " danger" : ""}`;
       b.disabled = !!it.disabled;
       b.setAttribute("role", "menuitem");
-      b.innerHTML = `<span class="menu-icon"></span><span class="menu-text"><span class="menu-label"></span><span class="menu-hint"></span></span>`;
+      b.innerHTML = `<span class="menu-icon" aria-hidden="true"></span><span class="menu-text"><span class="menu-label"></span><span class="menu-hint"></span></span>`;
       b.querySelector(".menu-icon").textContent = it.checked ? "✓" : it.icon || "";
       b.querySelector(".menu-label").textContent = it.label;
       b.querySelector(".menu-hint").textContent = it.hint || "";
@@ -91,12 +91,12 @@ export function showMenu(x, y, items, { onClose, className = "" } = {}) {
   el.style.left = `${Math.max(8, Math.min(x, innerWidth - r.width - 8))}px`;
   el.style.top = `${y + r.height > innerHeight - 8 ? Math.max(8, y - r.height) : y}px`;
 
-  open = { el, onClose };
-  // Listen from the next tick so the click that opened the menu doesn't close it.
+  open = { el, onClose, anchor };
+  addEventListener("keydown", onKey, true);
+  // Defer outside presses so the opening gesture doesn't close the menu.
   setTimeout(() => {
     if (open?.el !== el) return;
     addEventListener("pointerdown", onOutside, true);
-    addEventListener("keydown", onKey, true);
   });
   return el;
 }

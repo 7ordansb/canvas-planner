@@ -33,7 +33,7 @@ export async function init(a) {
   btn.textContent = "Import";
   btn.title = "Import tasks from a list, a CSV file or Microsoft To Do";
   btn.addEventListener("click", openImporter);
-  app.toolbarSlot.appendChild(btn);
+  app.canvasActions.appendChild(btn);
 }
 
 // ---------------------------------------------------------------- helpers ----

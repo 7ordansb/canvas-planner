@@ -2,7 +2,7 @@
 // (diagnostics, clear completed, JSON backup) and card tooltips.
 
 import { daysUntilDue } from "./growth.js";
-import { isTask } from "./model.js";
+import { isTask, NOTE_STYLES, noteStyle } from "./model.js";
 
 // ---------- Error capture (installed first thing in init) ----------
 const MAX_ERRORS = 20;
@@ -209,7 +209,7 @@ export async function init(app) {
   });
 
   // ===== Shortcut help =====
-  const helpBtn = el("button", { id: "btn-extras-help", class: "extras-tool", title: "Keyboard shortcuts (?)", "aria-label": "Keyboard shortcuts", text: "?" });
+  const helpBtn = el("button", { id: "btn-extras-help", class: "extras-tool", title: "Keyboard shortcuts (?)", "aria-label": "Keyboard shortcuts", text: "Shortcuts" });
   helpBtn.addEventListener("click", () => openHelp());
 
   function growthText() {
@@ -236,6 +236,7 @@ export async function init(app) {
       ]],
       ["Tasks", [
         ["New note or task", `${k("N")}, or double-click empty space`],
+        ["Add a timer, document or other element", "Open the arrow beside New note"],
         ["Edit a task in place", "Double-click it"],
         ["Switch between title and notes", k("Tab")],
         ["Finish editing the title", k("Enter")],
@@ -277,7 +278,10 @@ export async function init(app) {
   }
 
   // ===== Settings / About =====
-  const gearBtn = el("button", { id: "btn-extras-settings", class: "extras-tool", title: "Settings", "aria-label": "Settings", text: "⚙" });
+  const gearBtn = el("button", { id: "btn-extras-settings", class: "extras-tool", title: "Settings", "aria-label": "Settings" }, [
+    el("span", { class: "toolbar-gear", "aria-hidden": "true", text: "⚙" }),
+    el("span", { class: "toolbar-settings-label", text: "Settings" }),
+  ]);
   gearBtn.addEventListener("click", () => openSettings());
 
   async function appVersion() {
@@ -406,6 +410,10 @@ export async function init(app) {
     const hideDone = el("input", { type: "checkbox" });
     hideDone.checked = app.getHideDone();
     hideDone.addEventListener("change", () => app.setHideDone(hideDone.checked));
+    const defaultStyle = el("select", { "aria-label": "Default note style" });
+    for (const [value, text] of Object.entries(NOTE_STYLES)) defaultStyle.append(el("option", { value, text }));
+    defaultStyle.value = noteStyle(app.canvasSettings.get("defaultNoteStyle", "card"));
+    defaultStyle.addEventListener("change", () => app.canvasSettings.set("defaultNoteStyle", defaultStyle.value));
     const theme = el("select", { "aria-label": "Colour theme" });
     for (const [value, text] of [["system", "Use system setting"], ["light", "Light paper"], ["dark", "Charcoal"]]) {
       theme.append(el("option", { value, text }));
@@ -430,6 +438,7 @@ export async function init(app) {
     }
     body.append(
       el("label", { class: "settings-toggle" }, [defaultTask, document.createTextNode("Start new notes in task mode")]),
+      el("label", {}, ["Default note style", defaultStyle]),
       el("label", { class: "settings-toggle" }, [hideDone, document.createTextNode("Hide completed tasks")]),
       el("h3", { class: "extras-h3", text: "Task growth" }),
       el("p", { class: "hint", text: app.isDashboard() ? "Defaults for new canvases on this device. These also apply to the original canvas." : "These settings apply on this device to this canvas and its sub-canvases." }),

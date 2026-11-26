@@ -7,7 +7,7 @@ globalThis.addEventListener = () => {};
 globalThis.document = new EventTarget();
 
 globalThis.localStorage = { setItem() {} };
-const { normalize, setBoard, descendants, flush } = await import("../src/js/store.js");
+const { normalize, setBoard, descendants, flush, get, update } = await import("../src/js/store.js");
 
 const canvas = (id, canvasId = null) => ({ id, kind: "canvas", canvasId });
 const parentIds = (tasks) => Object.fromEntries(tasks.map(({ id, canvasId }) => [id, canvasId]));
@@ -37,5 +37,19 @@ test("breaks a sync-created cycle consistently in either merge order", () => {
 test("repairs self-parenting and keeps descendants reachable", async () => {
   setBoard({ tasks: [canvas("self", "self"), canvas("child", "self"), { id: "task", canvasId: "child" }] });
   assert.deepEqual(descendants("self").map(({ id }) => id), ["child", "task"]);
+  await flush();
+});
+
+test("checklist completion stays consistent after loading and editing a legacy task", async () => {
+  const items = [{ id: "item-1", title: "First", done: true }, { id: "item-2", title: "Second", done: false }];
+  setBoard({ tasks: [{ id: "task", kind: "task", completedAt: "2026-01-01", checklist: items }] });
+  assert.equal(get("task").completedAt, null);
+  update("task", { checklist: items.map((item) => ({ ...item, done: true })) });
+  const completedAt = get("task").completedAt;
+  assert.ok(completedAt);
+  update("task", { title: "New title" });
+  assert.equal(get("task").completedAt, completedAt);
+  update("task", { checklist: items });
+  assert.equal(get("task").completedAt, null);
   await flush();
 });

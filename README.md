@@ -15,7 +15,9 @@ It runs on Windows and macOS **without installing anything**.
 - Start on the **Dashboard** to create or open a canvas and see task totals, overdue tasks, and upcoming due dates. Boards created before the dashboard appear under **Original canvas**.
 - **Double-click** empty space to add a note. **Drag** cards to move them. Drag empty space or scroll to move around. Pinch or Ctrl+scroll to zoom.
 - Type directly on a new note or double-click an existing one to edit it. Press **Tab** to switch between its title and notes. Turn on **Task mode** in the side panel to enable a due date, completion and automatic growth. Use **Links and files** to attach a web link or file to that note.
-- In task mode, use **Checklist** to add, edit, tick off, reorder, or delete subtasks. The card shows checklist progress, and you can complete the parent task separately.
+- In task mode, use **Checklist** to add, edit, tick off, reorder, or delete subtasks. The card shows progress as completed/total. Checking the final subtask completes the task, and unchecking a subtask reopens it.
+- Change **Note style** on a card or choose the default in Settings. Use **Document** to write and scroll through long text on the canvas, or choose **Import document…** in the add menu to read a plain-text or Markdown file there.
+- Choose **Timer** from the add menu. Set a label and pick a stopwatch, a countdown in seconds, or a counter that changes by one every second.
 - Set a card’s colour in the side panel or right-click menu. When a canvas uses multiple colours, use the toolbar to show or hide them.
 - Hover near a card’s edge to find **+**. Click it to add a linked task, image, file, or sub-canvas. Drag from **+** onto another card to link them, and click the link label to change its type or remove it.
 - Drop or paste files onto the canvas and double-click their cards to open them.

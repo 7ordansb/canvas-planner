@@ -11,19 +11,31 @@
   <link rel="stylesheet" href="css/importer.css" />
   <link rel="stylesheet" href="css/extras.css" />
   <link rel="stylesheet" href="pinboard.css" />
+  <link rel="stylesheet" href="css/canvas-elements.css" />
 </head>
 <body>
   <main id="dashboard" aria-label="Dashboard" tabindex="-1" hidden></main>
   <div id="canvas"><div id="world"></div></div>
   <div id="hint">Double-click anywhere to add a note</div>
 
-  <header id="toolbar">
-    <nav id="crumbs" aria-label="Canvas path"></nav>
-    <button id="btn-new" title="New note (N)">+ New note</button>
-    <label class="toggle"><input type="checkbox" id="chk-hide-done" /> Hide done</label>
-    <div id="filter-bar" hidden></div>
-    <!-- Feature modules add their own buttons here -->
-    <div id="toolbar-slot"></div>
+  <header id="toolbar" aria-label="Canvas Planner controls">
+    <div class="toolbar-top">
+      <span class="toolbar-brand">Canvas Planner</span>
+      <nav id="crumbs" aria-label="Canvas path"></nav>
+      <div id="toolbar-slot" role="group" aria-label="App controls"></div>
+    </div>
+    <div class="toolbar-commands">
+      <div id="canvas-actions" class="toolbar-group" role="group" aria-label="Add to canvas">
+        <div class="add-split">
+          <button id="btn-new" title="New note (N)">+ New note</button>
+          <button id="btn-add-menu" aria-label="Add element" aria-haspopup="menu" aria-expanded="false"><span class="chevron" aria-hidden="true"></span></button>
+        </div>
+      </div>
+      <div class="toolbar-group toolbar-view" role="group" aria-label="Canvas view">
+        <label class="toggle"><input type="checkbox" id="chk-hide-done" /> Hide done</label>
+        <div id="filter-bar" hidden></div>
+      </div>
+    </div>
   </header>
 
   <nav id="zoom-controls" aria-label="Canvas zoom">
@@ -33,6 +45,17 @@
 
   <aside id="panel" hidden>
     <textarea id="f-title" rows="2" placeholder="What needs doing?"></textarea>
+    <label class="field note-only">
+      <span>Note style</span>
+      <select id="f-note-style"></select>
+    </label>
+    <section class="field timer-only" aria-label="Timer settings">
+      <label class="field"><span>Timer mode</span><select id="f-timer-mode"></select></label>
+      <label class="field" id="f-timer-limit-field">
+        <span id="f-timer-limit-label">Duration in seconds</span>
+        <input id="f-timer-limit" type="number" min="1" step="1" />
+      </label>
+    </section>
     <div class="field" id="f-color-field">
       <span>Colour</span>
       <div id="f-colors" class="swatches"></div>
@@ -50,7 +73,7 @@
       <textarea id="f-notes" rows="7" placeholder="Details, links, sub-steps…"></textarea>
     </label>
     <section class="field task-only" aria-label="Task checklist">
-      <span>Checklist</span>
+      <span>Checklist <strong id="f-checklist-progress"></strong></span>
       <ol id="f-checklist"></ol>
       <form id="f-checklist-form" class="row">
         <input id="f-checklist-item" type="text" placeholder="Add a subtask" aria-label="New subtask" required />

@@ -12,17 +12,12 @@ html[data-theme="dark"] body{--bg:#242824;--surface:#303630;--ink:#f5f2e7;--mute
 .dashboard-miniature{height:auto;border-radius:1px}.dashboard-miniature .mini-stage{width:100%;height:100%}
 .dashboard-tile>strong{font-size:23px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.agenda{border-left:1px solid var(--line);padding-left:22px}.dashboard-schedule{display:block}.dashboard-widget{border:0;border-radius:0;padding:8px 0;background:transparent}.dashboard-task{background:var(--surface);border:1px solid var(--line);padding:10px;text-align:left}
 .dashboard-metrics{display:flex;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px}.dashboard-metric{border:0;background:none;padding:0 12px 0 0;display:flex;align-items:baseline;gap:5px}.dashboard-metric strong{order:-1;font-size:15px}
-button.primary,#toolbar>#btn-new{background:#244ccc;color:white;border-radius:4px}.card.kind-task{border-radius:3px;box-shadow:0 1px 2px #0002}.card.overdue{border-left:5px solid #bd472b}.card.kind-canvas{border-radius:4px;background:var(--surface);color:var(--ink);box-shadow:0 0 0 2px var(--ink)}.popup-menu{border-radius:6px}.menu-icon{border-radius:3px;color:var(--accent)}
+button.primary{background:#244ccc;color:white;border-radius:4px}.card.kind-task{border-radius:3px;box-shadow:0 1px 2px #0002}.card.overdue{border-left:5px solid #bd472b}.card.kind-canvas{border-radius:4px;background:var(--surface);color:var(--ink);box-shadow:0 0 0 2px var(--ink)}.popup-menu{border-radius:6px}.menu-icon{border-radius:3px;color:var(--accent)}
 @media(max-width:750px){.review-layout{grid-template-columns:1fr}.agenda{border:0;padding:0}}
 
 .hide-link-labels #link-chips { display:none }
 .card.distant .check,.card.distant .resize-grip { visibility:hidden;pointer-events:none }
 .card.distant { cursor:zoom-in }
-#crumbs .back-dashboard { background:transparent;box-shadow:none;color:var(--accent);font-weight:600 }
-#toolbar-slot > #btn-extras-settings { font: 26px/1 "Segoe UI Symbol",sans-serif; min-width:40px;height:38px;padding:4px 8px }
-#toolbar { align-items:center;gap:6px }
-#toolbar > button,#toolbar-slot > button { min-height:36px;border-radius:5px }
-#toolbar > #crumbs { background:none;box-shadow:none;padding:0; }
 #panel,.modal {border-radius:6px;border:1px solid var(--line)}
 #panel button,.modal button {border-radius:4px}
 :focus-visible {outline:2px solid var(--accent);outline-offset:2px}
