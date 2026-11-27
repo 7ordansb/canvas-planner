@@ -1,11 +1,75 @@
 import { daysUntilDue } from "./growth.js";
-import { isTask } from "./model.js";
+import { COVER_IMAGE_TYPES, MAX_ATTACHMENT_BYTES, isTask } from "./model.js";
+import { imageUrl, pickFile, storeFile } from "./attachments.js";
+import { closeMenu, showMenu } from "./menus.js";
 
 function element(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+async function showCover(preview, cover) {
+  if (!cover?.attachmentId) return;
+  try {
+    const url = await imageUrl(cover.attachmentId, cover.mime);
+    if (!url || !preview.isConnected) return;
+    const image = Object.assign(element("img", "dashboard-cover-image"), { alt: "", src: url, draggable: false });
+    await image.decode();
+    if (!preview.isConnected) return;
+    preview.replaceChildren(image);
+    preview.classList.add("has-cover");
+  } catch {
+    // Keep the miniature available while a cover is missing or unreadable.
+  }
+}
+
+function coverButton(app, { id, title, cover }) {
+  const button = element("button", "dashboard-cover-button", "Cover");
+  button.dataset.canvasId = id ?? "";
+  button.setAttribute("aria-label", `Cover for ${title || "Untitled canvas"}`);
+  button.setAttribute("aria-haspopup", "menu");
+  button.setAttribute("aria-expanded", "false");
+
+  function saveCover(image) {
+    app.store.setCanvasCover(id, image);
+    app.render();
+    [...document.querySelectorAll(".dashboard-cover-button")]
+      .find((item) => item.dataset.canvasId === button.dataset.canvasId)?.focus({ preventScroll: true });
+  }
+
+  async function chooseCover() {
+    const file = await pickFile(COVER_IMAGE_TYPES.join(","));
+    if (!file) return;
+    if (!COVER_IMAGE_TYPES.includes(file.type)) return app.toast("Choose a JPG, PNG, WebP or GIF image.");
+    if (file.size > MAX_ATTACHMENT_BYTES) return app.toast("Cover images can be up to 20 MB.");
+    const url = URL.createObjectURL(file);
+    try {
+      const image = Object.assign(new Image(), { src: url });
+      await image.decode();
+      saveCover(await storeFile(file));
+    } catch {
+      app.toast("Couldn't load that cover image.");
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  button.addEventListener("click", () => {
+    if (button.getAttribute("aria-expanded") === "true") return closeMenu();
+    const bounds = button.getBoundingClientRect();
+    const menu = showMenu(bounds.right - 258, bounds.bottom + 5, [
+      { label: cover?.attachmentId ? "Change cover…" : "Set cover…", icon: "↥", onClick: chooseCover },
+      cover?.attachmentId && { label: "Remove cover", icon: "×", onClick: () => saveCover(null) },
+    ], { anchor: button, onClose: () => {
+      button.setAttribute("aria-expanded", "false");
+      button.focus({ preventScroll: true });
+    } });
+    button.setAttribute("aria-expanded", "true");
+    menu.querySelector("button")?.focus();
+  });
+  return button;
 }
 
 export function renderDashboard(app, root) {
@@ -60,16 +124,22 @@ export function renderDashboard(app, root) {
   const tiles = element("div", "dashboard-tiles");
   const canvases = app.store.board.tasks.filter((task) => task.kind === "canvas" && task.workspace && !task.canvasId);
   const loose = app.store.board.tasks.filter((task) => !task.canvasId && !(task.kind === "canvas" && task.workspace));
-  const entries = canvases.map((card) => ({ id: card.id, title: card.title, count: app.store.descendants(card.id).length }));
-  if (loose.length) entries.unshift({ id: null, title: "Original canvas", count: loose.length });
-  for (const { id, title, count } of entries) {
+  const entries = canvases.map((card) => ({
+    id: card.id, title: card.title, cover: card.cover, count: app.store.descendants(card.id).length,
+  }));
+  if (loose.length) entries.unshift({ id: null, title: "Original canvas", count: loose.length, cover: app.store.board.rootCover });
+  for (const entry of entries) {
+    const { id, title, count, cover } = entry;
+    const project = element("div", "dashboard-project");
     const tile = element("button", "dashboard-tile");
     const preview = element("div", "canvas-miniature dashboard-miniature");
     app.renderMiniature(preview, id);
     tile.append(preview, element("strong", "", title || "Untitled canvas"),
       element("span", "dashboard-detail", `${count} item${count === 1 ? "" : "s"}`));
     tile.addEventListener("click", () => app.enterCanvas(id, preview));
-    tiles.append(tile);
+    project.append(tile, coverButton(app, entry));
+    tiles.append(project);
+    showCover(preview, cover);
   }
   if (entries.length) workspaces.append(tiles);
   else workspaces.append(element("p", "dashboard-empty", "Create a canvas to start adding notes and tasks."));

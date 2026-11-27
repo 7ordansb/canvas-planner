@@ -87,6 +87,7 @@ export function mergeBoards(local, remote, { now = Date.now() } = {}) {
   // Keep unknown top-level fields (remote first, local overrides), then the known ones.
   const extra = { ...(remote && typeof remote === "object" ? remote : {}), ...(local || {}) };
   const out = { ...extra, version: 1, tasks, links, deleted };
+  if (local?.rootCover && remote?.rootCover) out.rootCover = newer(local.rootCover, remote.rootCover);
   return JSON.parse(JSON.stringify(out)); // deep copy: no shared references with inputs
 }
 
@@ -149,13 +150,15 @@ export function sameBoard(a, b, { ignoreTaskOrder = false } = {}) {
 export const isSafeAttachmentId = (id) =>
   typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/.test(id) && !id.includes("..");
 
-/** Set of attachmentIds used by tasks on the board (tombstoned tasks excluded). */
+/** Set of attachmentIds used by cards and covers (tombstoned cards excluded). */
 export function referencedAttachmentIds(board) {
   const deleted = tombstonesOf(board);
   const out = new Set();
+  if (isSafeAttachmentId(board?.rootCover?.attachmentId)) out.add(board.rootCover.attachmentId);
   for (const t of tasksOf(board)) {
     if (t.id in deleted) continue;
     if (isSafeAttachmentId(t.attachmentId)) out.add(t.attachmentId);
+    if (t.kind === "canvas" && isSafeAttachmentId(t.cover?.attachmentId)) out.add(t.cover.attachmentId);
   }
   return out;
 }

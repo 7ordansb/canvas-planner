@@ -139,19 +139,7 @@ button.danger { background: transparent; color: var(--danger); box-shadow: inset
 button:disabled { opacity: .5; cursor: default; }
 
 /* ---------- Side panel ---------- */
-#panel {
-  position: fixed; top: 12px; right: 12px; bottom: 12px; width: 300px;
-  box-sizing: border-box; padding: 16px;
-  display: flex; flex-direction: column; gap: 14px;
-  background: var(--surface); border-radius: 14px; box-shadow: var(--shadow);
-  overflow: auto;
-}
 #panel[hidden] { display: none; }
-#panel textarea, #panel input[type="date"] {
-  width: 100%; box-sizing: border-box; padding: 8px 10px;
-  border: 1px solid var(--line); border-radius: 8px; background: transparent; resize: vertical;
-}
-#f-title { font-size: 17px; font-weight: 600; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field > span { font-size: 12px; color: var(--muted); }
 .row { display: flex; gap: 8px; align-items: center; }
@@ -273,16 +261,10 @@ button:disabled { opacity: .5; cursor: default; }
 #panel:not([data-task-mode="true"]) .task-only,
 #panel:not([data-kind="task"]) .note-only,
 #panel:is([data-kind="task"], [data-kind="label"]) .not-task { display: none; }
-#f-link-url, #f-checklist-item, #f-checklist input[type="text"] {
-  min-width: 0; width: 100%; padding: 7px; background: transparent;
-  border: 1px solid var(--line); border-radius: 8px;
-}
 #f-link-form button { white-space: nowrap; }
 #f-checklist { display: grid; gap: 6px; list-style: none; padding: 0; margin: 0; }
 #f-checklist:empty { display: none; }
-#f-checklist li { display: grid; grid-template-columns: auto minmax(0, 1fr) repeat(3, 26px); gap: 3px; align-items: center; }
 #f-checklist li.checked input[type="text"] { text-decoration: line-through; color: var(--muted); }
-#f-checklist button { padding: 4px 0; min-height: 28px; }
 #f-checklist button:disabled { opacity: .3; }
 #btn-attach-file { align-self: flex-start; }
 #f-attachments { display: grid; gap: 4px; list-style: none; padding: 0; margin: 0; }

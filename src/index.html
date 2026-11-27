@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/extras.css" />
   <link rel="stylesheet" href="pinboard.css" />
   <link rel="stylesheet" href="css/canvas-elements.css" />
+  <link rel="stylesheet" href="css/editor.css" />
 </head>
 <body>
   <main id="dashboard" aria-label="Dashboard" tabindex="-1" hidden></main>
@@ -43,58 +44,88 @@
     <button id="zoom-in" aria-label="Zoom in">+</button><button id="btn-fit">Fit</button>
   </nav>
 
-  <aside id="panel" hidden>
-    <textarea id="f-title" rows="2" placeholder="What needs doing?"></textarea>
-    <label class="field note-only">
-      <span>Note style</span>
-      <select id="f-note-style"></select>
-    </label>
-    <section class="field timer-only" aria-label="Timer settings">
-      <label class="field"><span>Timer mode</span><select id="f-timer-mode"></select></label>
-      <label class="field" id="f-timer-limit-field">
-        <span id="f-timer-limit-label">Duration in seconds</span>
-        <input id="f-timer-limit" type="number" min="1" step="1" />
+  <aside id="panel" aria-labelledby="editor-heading" hidden>
+    <header class="editor-header">
+      <h2 id="editor-heading">Note</h2>
+      <span id="editor-status" class="editor-status task-only"></span>
+      <button id="btn-close-editor" aria-label="Close editor" title="Close editor" type="button">×</button>
+    </header>
+    <div class="editor-scroll">
+      <label class="field editor-title">
+        <span>Title</span>
+        <textarea id="f-title" rows="2" placeholder="What needs doing?"></textarea>
       </label>
-    </section>
-    <div class="field" id="f-color-field">
-      <span>Colour</span>
-      <div id="f-colors" class="swatches"></div>
+      <label class="editor-mode note-only">
+        <span><strong>Task mode</strong><small>Add a due date and checklist</small></span>
+        <input id="f-task-mode" type="checkbox" aria-label="Task mode" />
+      </label>
+      <section class="editor-section timer-only" aria-labelledby="editor-timer">
+        <h3 id="editor-timer">Timer settings</h3>
+        <label class="field"><span>Timer mode</span><select id="f-timer-mode"></select></label>
+        <label class="field" id="f-timer-limit-field">
+          <span id="f-timer-limit-label">Duration in seconds</span>
+          <input id="f-timer-limit" type="number" min="1" step="1" />
+        </label>
+      </section>
+      <section class="editor-section task-only" aria-labelledby="editor-schedule">
+        <h3 id="editor-schedule">Schedule</h3>
+        <div class="field">
+          <label for="f-due">Due date</label>
+          <input type="date" id="f-due" />
+        </div>
+        <div class="row editor-date-actions">
+          <button type="button" data-due-offset="0" class="ghost small">Today</button>
+          <button type="button" data-due-offset="1" class="ghost small">Tomorrow</button>
+          <button id="btn-clear-due" class="ghost small" type="button">Clear</button>
+        </div>
+      </section>
+      <section class="editor-section task-only" aria-label="Task checklist">
+        <div class="editor-section-heading">
+          <h3>Checklist</h3><strong id="f-checklist-progress"></strong>
+        </div>
+        <progress id="editor-checklist-meter" aria-label="Checklist completion" hidden></progress>
+        <ol id="f-checklist"></ol>
+        <form id="f-checklist-form" class="row">
+          <input id="f-checklist-item" type="text" placeholder="Add a subtask" aria-label="New subtask" required />
+          <button type="submit" class="primary">Add</button>
+        </form>
+      </section>
+      <section class="editor-section note-only" aria-labelledby="editor-notes">
+        <div class="editor-section-heading">
+          <h3 id="editor-notes"><label for="f-notes">Notes</label></h3>
+          <button id="btn-expand-notes" class="ghost small" type="button">Expand</button>
+        </div>
+        <textarea id="f-notes" rows="6" placeholder="Write your notes…"></textarea>
+      </section>
+      <section class="editor-section note-only" aria-label="Note attachments">
+        <h3>Links and files</h3>
+        <form id="f-link-form" class="row">
+          <input id="f-link-url" type="text" inputmode="url" placeholder="Paste a web link" aria-label="Web link" required />
+          <button type="submit" class="ghost">Add link</button>
+        </form>
+        <button id="btn-attach-file" class="ghost small" type="button">Attach a file…</button>
+        <ul id="f-attachments"></ul>
+      </section>
+      <section class="editor-section editor-appearance" aria-labelledby="editor-appearance">
+        <h3 id="editor-appearance">Appearance</h3>
+        <label class="field note-only">
+          <span>Note style</span>
+          <select id="f-note-style"></select>
+        </label>
+        <div class="field" id="f-color-field">
+          <span>Colour</span>
+          <div id="f-colors" class="swatches"></div>
+        </div>
+      </section>
     </div>
-    <label class="field note-only"><span><input id="f-task-mode" type="checkbox" /> Task mode</span></label>
-    <div class="field task-only">
-      <span>Due date</span>
-      <div class="row">
-        <input type="date" id="f-due" />
-        <button id="btn-clear-due" class="ghost small">Clear</button>
+    <footer class="editor-footer">
+      <p id="f-info"></p>
+      <div class="row editor-actions">
+        <button id="btn-complete" class="primary task-only">Mark complete</button>
+        <button id="btn-open" class="primary not-task">Open</button>
+        <button id="btn-delete" class="danger">Delete</button>
       </div>
-    </div>
-    <label class="field note-only">
-      <span>Notes</span>
-      <textarea id="f-notes" rows="7" placeholder="Details, links, sub-steps…"></textarea>
-    </label>
-    <section class="field task-only" aria-label="Task checklist">
-      <span>Checklist <strong id="f-checklist-progress"></strong></span>
-      <ol id="f-checklist"></ol>
-      <form id="f-checklist-form" class="row">
-        <input id="f-checklist-item" type="text" placeholder="Add a subtask" aria-label="New subtask" required />
-        <button type="submit" class="small">Add</button>
-      </form>
-    </section>
-    <section class="field note-only" aria-label="Note attachments">
-      <span>Links and files</span>
-      <form id="f-link-form" class="row">
-        <input id="f-link-url" type="text" inputmode="url" placeholder="Paste a web link" aria-label="Web link" required />
-        <button type="submit" class="small">Add link</button>
-      </form>
-      <button id="btn-attach-file" class="small" type="button">Attach a file…</button>
-      <ul id="f-attachments"></ul>
-    </section>
-    <p id="f-info"></p>
-    <div class="row">
-      <button id="btn-complete" class="task-only">Mark complete</button>
-      <button id="btn-open" class="not-task">Open</button>
-      <button id="btn-delete" class="danger">Delete</button>
-    </div>
+    </footer>
   </aside>
 
   <div id="toast" hidden><span id="toast-msg"></span><button id="toast-action" class="ghost small"></button></div>

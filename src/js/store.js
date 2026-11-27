@@ -2,7 +2,8 @@
 // Inside the desktop app it saves via Rust to a file in the app's data folder.
 // Opened in a plain browser (for development) it falls back to localStorage.
 
-import { KINDS, COLOR_BY_KEY, LINK_TYPES, checklistCompletion, normalizeChecklist, webLink } from "./model.js";
+import { KINDS, COLOR_BY_KEY, LINK_TYPES, COVER_IMAGE_TYPES, checklistCompletion, normalizeChecklist, webLink } from "./model.js";
+import { isSafeAttachmentId } from "./sync-merge.js";
 import { normalizeTimer } from "./timer.js";
 
 const invoke = window.__TAURI__?.core?.invoke;
@@ -18,6 +19,11 @@ export const events = new EventTarget();
 
 let onError = () => {};
 export function setErrorHandler(fn) { onError = fn; }
+
+function normalizeCover(cover) {
+  if (!isSafeAttachmentId(cover?.attachmentId) || !COVER_IMAGE_TYPES.includes(cover.mime)) return null;
+  return { attachmentId: cover.attachmentId, mime: cover.mime, size: Number(cover.size) || 0 };
+}
 
 function normalize(data) {
   const now = new Date().toISOString();
@@ -44,6 +50,7 @@ function normalize(data) {
     }));
   const canvases = new Map(tasks.filter((t) => t.kind === "canvas").map((t) => [t.id, t]));
   for (const task of tasks) {
+    if (task.kind === "canvas" && task.cover !== undefined) task.cover = normalizeCover(task.cover);
     if (task.kind === "timer") task.timer = normalizeTimer(task.timer);
     if (task.kind === "task" && task.checklist?.length) {
       task.completedAt = checklistCompletion(task, task.checklist, task.updatedAt);
@@ -76,7 +83,11 @@ function normalize(data) {
       createdAt: l.createdAt || now,
       updatedAt: l.updatedAt || l.createdAt || now,
     }));
-  return { version: 1, deleted, tasks, links };
+  const out = { version: 1, deleted, tasks, links };
+  if (typeof data?.rootCover?.updatedAt === "string") {
+    out.rootCover = { ...(normalizeCover(data.rootCover) || { attachmentId: null }), updatedAt: data.rootCover.updatedAt };
+  }
+  return out;
 }
 
 async function readRaw(backup) {
@@ -151,6 +162,16 @@ export async function flushForRestart() {
 }
 
 export const get = (id) => board.tasks.find((t) => t.id === id);
+
+export function setCanvasCover(id, cover) {
+  cover = normalizeCover(cover);
+  if (id === null) {
+    board.rootCover = { ...(cover || { attachmentId: null }), updatedAt: new Date().toISOString() };
+    save();
+  } else if (get(id)?.kind === "canvas") {
+    update(id, { cover });
+  }
+}
 
 export function update(id, patch) {
   const t = get(id);

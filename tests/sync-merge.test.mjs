@@ -330,6 +330,19 @@ test("attachmentsDir sits next to the board file", () => {
   assert.equal(attachmentsDir("/a/b/board.json"), "a/b/attachments");
 });
 
+test("workspace covers sync as attachments and removing a root cover wins over a stale copy", () => {
+  const workspace = task("project", 0, { kind: "canvas", cover: { attachmentId: "cover.png", mime: "image/png" } });
+  const removed = task("deleted", 0, { kind: "canvas", cover: { attachmentId: "deleted.jpg", mime: "image/jpeg" } });
+  const withCover = { ...board([workspace, removed], { deleted: at(3) }), rootCover: { attachmentId: "original.png", updatedAt: at(2) } };
+  const withoutCover = { ...board(), rootCover: { attachmentId: null, updatedAt: at(4) } };
+  assert.deepEqual([...referencedAttachmentIds(withCover)], ["original.png", "cover.png"]);
+  for (const [local, remote] of [[withCover, withoutCover], [withoutCover, withCover]]) {
+    const merged = checkIdempotent(local, remote);
+    assert.deepEqual(merged.rootCover, withoutCover.rootCover);
+    assert.deepEqual([...referencedAttachmentIds(merged)], ["cover.png"]);
+  }
+});
+
 test("planAttachments: upload missing remote, download missing local", () => {
   const p = planAttachments(new Set(["c", "a", "b", "d"]), new Set(["a", "c", "x"]), new Set(["b", "c", "y"]));
   assert.deepEqual(p, { upload: ["a"], download: ["b"] });

@@ -12,9 +12,9 @@ It runs on Windows and macOS **without installing anything**.
 3. In the desktop app, choose **Settings → Update from GitHub** to get the latest release and restart. With older versions, download the latest release and replace the old app file once. Your tasks are stored separately.
 
 ## Using it
-- Start on the **Dashboard** to create or open a canvas and see task totals, overdue tasks, and upcoming due dates. Boards created before the dashboard appear under **Original canvas**.
+- Start on the **Dashboard** to create or open a canvas and see task totals, overdue tasks, and upcoming due dates. Use **Cover** on a canvas tile to set, replace, or remove its image. Boards created before the dashboard appear under **Original canvas**.
 - **Double-click** empty space to add a note. **Drag** cards to move them. Drag empty space or scroll to move around. Pinch or Ctrl+scroll to zoom.
-- Type directly on a new note or double-click an existing one to edit it. Press **Tab** to switch between its title and notes. Turn on **Task mode** in the side panel to enable a due date, completion and automatic growth. Use **Links and files** to attach a web link or file to that note.
+- Type directly on a new note or double-click an existing one to edit it. Press **Tab** to switch between its title and notes. In the editor, use **Expand** for more writing space and **Links and files** to add attachments. Turn on **Task mode** to enable completion, automatic growth, and scheduling. Use **Today** or **Tomorrow** to set a due date quickly.
 - In task mode, use **Checklist** to add, edit, tick off, reorder, or delete subtasks. The card shows progress as completed/total. Checking the final subtask completes the task, and unchecking a subtask reopens it.
 - Change **Note style** on a card or choose the default in Settings. Use **Document** to write and scroll through long text on the canvas, or choose **Import document…** in the add menu to read a plain-text or Markdown file there.
 - Choose **Timer** from the add menu. Set a label and pick a stopwatch, a countdown in seconds, or a counter that changes by one every second.

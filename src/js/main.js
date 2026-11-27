@@ -55,6 +55,11 @@ const timerLimit = $("#f-timer-limit");
 const timerLimitField = $("#f-timer-limit-field");
 const timerLimitLabel = $("#f-timer-limit-label");
 const checklistProgress = $("#f-checklist-progress");
+const checklistMeter = $("#editor-checklist-meter");
+const editorStatus = $("#editor-status");
+const editorHeading = $("#editor-heading");
+const editorScroll = panel.querySelector(".editor-scroll");
+const clearDueButton = $("#btn-clear-due");
 
 for (const [select, options] of [[styleInput, NOTE_STYLES], [timerMode, TIMER_MODES]]) {
   for (const [value, label] of Object.entries(options)) select.add(new Option(label, value));
@@ -792,7 +797,8 @@ function select(id) {
 
 function removeIfEmpty(id) {
   const t = store.get(id);
-  if (t && (t.kind === "task" || t.kind === "label") && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due && !t.checklist?.length) {
+  if (t && (t.kind === "task" || t.kind === "label") && id !== editingId && !t.title.trim() && !t.notes.trim() && !t.due && !t.checklist?.length && !t.webLinks?.length) {
+    if (store.board.links.some((l) => l.type === "attachment" && (l.from === id || l.to === id))) return;
     const linked = store.board.links.filter((l) => l.from === id || l.to === id).map((l) => l.id);
     store.removeMany({ taskIds: [id] });
     // Never synced, so no need for tombstones.
@@ -812,18 +818,28 @@ function updatePanel() {
   const task = selectedId && store.get(selectedId);
   panel.hidden = !task;
   if (!task) { panelTaskId = null; return; }
+  const active = isTask(task);
   panel.dataset.kind = task.kind;
-  panel.dataset.taskMode = String(isTask(task));
-  panel.dataset.hasChecklist = String(isTask(task) && task.checklist?.length > 0);
-  taskMode.checked = isTask(task);
+  panel.dataset.taskMode = String(active);
+  panel.dataset.hasChecklist = String(active && task.checklist?.length > 0);
+  taskMode.checked = active;
+  setText(editorHeading, task.kind === "task" ? (active ? "Task" : "Note") :
+    ({ canvas: "Sub-canvas", label: "Label", timer: "Timer", image: "Image", file: "File" })[task.kind]);
   // Refresh fields on a new selection, or when something else changed them (never while typing in them).
   const fresh = panelTaskId !== task.id;
-  if (fresh) webLinkInput.value = "";
+  if (fresh) {
+    webLinkInput.value = "";
+    editorScroll.scrollTop = 0;
+  }
   updateChecklist(task, fresh);
   if (task.kind === "task") {
     styleInput.value = noteStyle(task.noteStyle);
-    setText(checklistProgress, task.checklist?.length
-      ? `${task.checklist.filter((item) => item.done).length}/${task.checklist.length}` : "");
+    const total = task.checklist?.length || 0;
+    const done = task.checklist?.filter((item) => item.done).length || 0;
+    setText(checklistProgress, total ? `${done}/${total}` : "");
+    checklistMeter.hidden = !total;
+    checklistMeter.max = Math.max(1, total);
+    checklistMeter.value = done;
   }
   if (task.kind === "timer") {
     const { mode, limit } = task.timer;
@@ -837,6 +853,7 @@ function updatePanel() {
   if (fresh || (document.activeElement !== fNotes && fNotes.value !== task.notes)) fNotes.value = task.notes;
   panelTaskId = task.id;
   if (document.activeElement !== fDue) fDue.value = task.due || "";
+  clearDueButton.disabled = !task.due;
   fTitle.placeholder = task.kind === "canvas" ? "Canvas name" : task.kind === "label" ? "Label text" : task.kind === "timer" ? "Timer label" : isTask(task) ? "What needs doing?" : task.kind === "task" ? "Note title" : "Name";
 
   // Colour swatches
@@ -848,21 +865,25 @@ function updatePanel() {
       const b = document.createElement("button");
       b.className = `swatch${s.checked ? " checked" : ""}`;
       b.title = s.label;
+      b.setAttribute("aria-pressed", String(s.checked));
       b.style.background = s.css;
       b.addEventListener("click", () => setColor(task.id, s.key));
       fColors.appendChild(b);
     }
   }
 
-  const g = growthOf(task, now(), growthSettings);
+  const time = now();
+  const g = active && growthOf(task, time, growthSettings);
+  const blockers = active ? rel.openBlockers(task.id).length : 0;
+  setText(editorStatus, task.completedAt ? "Completed" : blockers ? "Waiting on a dependency" : dueText(task, time) || "Open");
+  editorStatus.dataset.state = task.completedAt ? "completed" : blockers || g?.overdue ? "attention" : "open";
   const bits = [`Created ${relativeAge(task.createdAt)}`];
-  if (isTask(task)) bits.push(task.completedAt ? `completed ${relativeAge(task.completedAt)}` : `size ${g.scale.toFixed(1)}×`);
+  if (active) bits.push(task.completedAt ? `completed ${relativeAge(task.completedAt)}` : `size ${g.scale.toFixed(1)}×`);
   if (task.kind === "image" || task.kind === "file") bits.push(formatSize(task.size));
   if (task.source) bits.push(`imported from ${task.source}`);
-  const r = rel.of(task.id);
   const linkCount = store.board.links.filter((l) => l.from === task.id || l.to === task.id).length;
   if (linkCount) bits.push(`${linkCount} link${linkCount === 1 ? "" : "s"}`);
-  if (r.blockers.length) bits.push(`waits on ${r.blockers.length}`);
+  if (blockers) bits.push(`waits on ${blockers}`);
   fInfo.textContent = bits.join(" · ");
   setText(btnComplete, task.completedAt ? "Mark not done" : "Mark complete");
   setText(btnOpen, task.kind === "canvas" ? "Open canvas" : "Open file");
@@ -952,7 +973,39 @@ $("#btn-attach-file").addEventListener("click", async () => {
 fTitle.addEventListener("input", () => { store.update(selectedId, { title: fTitle.value }); render(); });
 fNotes.addEventListener("input", () => { store.update(selectedId, { notes: fNotes.value }); render(); });
 fDue.addEventListener("change", () => { store.update(selectedId, { due: fDue.value || null }); render(); });
-$("#btn-clear-due").addEventListener("click", () => { store.update(selectedId, { due: null }); render(); });
+clearDueButton.addEventListener("click", () => { store.update(selectedId, { due: null }); render(); });
+for (const button of panel.querySelectorAll("[data-due-offset]")) {
+  button.addEventListener("click", () => {
+    if (!isTask(store.get(selectedId))) return;
+    const date = new Date();
+    date.setDate(date.getDate() + Number(button.dataset.dueOffset));
+    const due = [date.getFullYear(), date.getMonth() + 1, date.getDate()].map((value) => String(value).padStart(2, "0")).join("-");
+    store.update(selectedId, { due });
+    render();
+  });
+}
+$("#btn-close-editor").addEventListener("click", () => {
+  select(null);
+  $("#btn-new").focus({ preventScroll: true });
+});
+$("#btn-expand-notes").addEventListener("click", () => {
+  const note = store.get(selectedId);
+  if (note?.kind !== "task") return;
+  stopEdit();
+  const textarea = document.createElement("textarea");
+  textarea.value = note.notes;
+  textarea.placeholder = "Write your notes…";
+  textarea.setAttribute("aria-label", "Notes");
+  const modal = openModal("Edit notes", textarea, { onClose: () => {
+    if (selectedId === note.id) $("#btn-expand-notes").focus();
+  } });
+  modal.el.classList.add("note-writing-modal");
+  textarea.addEventListener("input", () => {
+    store.update(note.id, { notes: textarea.value });
+    render();
+  });
+  textarea.focus();
+});
 btnComplete.addEventListener("click", () => toggleComplete(selectedId));
 btnOpen.addEventListener("click", () => openElement(selectedId));
 $("#btn-delete").addEventListener("click", () => deleteTask(selectedId));
@@ -984,6 +1037,9 @@ function startEdit(id, field = "title") {
   if (editingId && editingId !== id) stopEdit({ silent: true });
   const el = els.get(id);
   if (!el) return;
+  const bounds = el.getBoundingClientRect();
+  const view = viewRect();
+  if (bounds.right > view.right - 10 || bounds.left < view.left || bounds.top < view.top || bounds.bottom > view.bottom) focusTask(id);
   editingId = id;
   el.classList.add("editing");
   const titleEl = el.querySelector(".title");

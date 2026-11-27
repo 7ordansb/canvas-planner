@@ -293,7 +293,11 @@ async function syncAttachments(token, cfg) {
     const referenced = referencedAttachmentIds(board);
     if (!referenced.size) return 0;
     const sizes = new Map();
-    for (const t of board.tasks) if (t.attachmentId) sizes.set(t.attachmentId, Number(t.size) || 0);
+    if (board.rootCover?.attachmentId) sizes.set(board.rootCover.attachmentId, board.rootCover.size);
+    for (const task of board.tasks) {
+      if (task.attachmentId) sizes.set(task.attachmentId, Number(task.size) || 0);
+      if (task.cover?.attachmentId) sizes.set(task.cover.attachmentId, task.cover.size);
+    }
 
     const local = new Set(await att.list()); // once per cycle
     // Skip the listing entirely when everything is already known to be in both places.

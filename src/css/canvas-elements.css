@@ -100,8 +100,6 @@
   transform: translateY(-2px) rotate(45deg);
 }
 #toolbar #btn-import { color: var(--muted); }
-#panel { top: calc(var(--toolbar-bottom, 98px) + 12px); }
-
 @media (max-width: 760px) {
   .toolbar-top, .toolbar-commands { gap: 6px; padding-inline: 10px; }
   #toolbar button { padding-inline: 7px; }
@@ -240,12 +238,22 @@
 #panel:not([data-kind="timer"]) .timer-only,
 #panel[data-kind="timer"] .not-task,
 #f-timer-limit-field[hidden] { display: none; }
-#panel :is(select, input[type="number"]) {
-  min-width: 0;
-  width: 100%;
-  box-sizing: border-box;
-  padding: 7px 9px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--surface);
+
+/* Dashboard covers */
+.dashboard-project { position: relative; min-width: 0; }
+.dashboard-miniature.has-cover { background: var(--bg); }
+.dashboard-cover-image {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  object-fit: cover;
+}
+.dashboard-cover-button {
+  position: absolute; top: 17px; right: 17px;
+  padding: 4px 8px; min-height: 27px;
+  border: 1px solid var(--line); border-radius: 4px;
+  font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface);
+}
+.dashboard-cover-button:hover,
+.dashboard-cover-button[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
 }

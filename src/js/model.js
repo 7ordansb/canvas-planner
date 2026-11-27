@@ -57,6 +57,7 @@ export const LINK_TYPES = {
 };
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const COVER_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 /** Accept HTTP(S) links for notes. Bare domains default to HTTPS. */
 export function webLink(input) {
